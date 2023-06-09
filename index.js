@@ -27,20 +27,33 @@ class Port extends Duplex {
   constructor (channel) {
     super({ mapWritable })
 
+    this._pendingWrite = null
+    this._pendingEnd = null
+    this._pendingDestroy = null
+
     this.handle = binding.portInit(channel.handle, this,
-      this._onread,
-      this._onwrite,
+      this._ondrain,
+      this._onflush,
       this._onend,
       this._ondestroy
     )
-
-    this._destroyCallback = null
   }
 
-  _onread () {
+  _ondrain () {
+    if (this._pendingWrite) {
+      const { cb, value } = this._pendingWrite
+      this._pendingWrite = null
+
+      this._write(value, cb)
+    } else if (this._pendingEnd) {
+      const cb = this._pendingEnd
+      this._pendingEnd = null
+
+      this._final(cb)
+    }
   }
 
-  _onwrite () {
+  _onflush () {
     while (true) {
       const value = binding.portRead(this.handle)
 
@@ -55,23 +68,27 @@ class Port extends Duplex {
   }
 
   _ondestroy () {
-    this._destroyCallback(null)
+    this._pendingDestroy(null)
   }
 
   _write (value, cb) {
     if (binding.portWrite(this.handle, value)) {
       cb(null)
+    } else {
+      this._pendingWrite = { cb, value }
     }
   }
 
   _final (cb) {
     if (binding.portEnd(this.handle)) {
       cb(null)
+    } else {
+      this._pendingEnd = cb
     }
   }
 
   _destroy (cb) {
-    this._destroyCallback = cb
+    this._pendingDestroy = cb
     binding.portDestroy(this.handle)
   }
 }
