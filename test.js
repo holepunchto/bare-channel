@@ -1,6 +1,7 @@
-const Thread = require('thread')
+/* global Bare */
 const test = require('brittle')
 const Channel = require('.')
+const { Thread } = Bare
 
 test('basic', (t) => {
   t.plan(2)

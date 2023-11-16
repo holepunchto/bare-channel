@@ -10,6 +10,9 @@
     "CMakeLists.txt",
     "prebuilds"
   ],
+  "imports": {
+    "events": "bare-events"
+  },
   "scripts": {
     "test": "standard && bare test.js"
   },
@@ -24,6 +27,7 @@
   },
   "homepage": "https://github.com/holepunchto/bare-channel#readme",
   "dependencies": {
+    "bare-events": "^2.0.0",
     "streamx": "^2.14.0"
   },
   "devDependencies": {
