@@ -3,29 +3,36 @@ const test = require('brittle')
 const Channel = require('.')
 const { Thread } = Bare
 
-test('basic', (t) => {
+test('basic', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
   t.teardown(() => channel.destroy())
 
-  const thread = new Thread(__filename, { data: channel.handle }, (handle) => {
+  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
     const Channel = require('.')
 
     const channel = Channel.from(handle)
-
     const port = channel.connect()
-    port
-      .on('data', (data) => port.end(data))
+
+    for await (const data of port) {
+      port.send(data)
+    }
   })
 
   const port = channel.connect()
-  port
-    .on('data', (data) => t.alike(data, Buffer.from('ping')))
-    .on('close', () => {
-      thread.join()
+  const expected = [Buffer.from('ping'), Buffer.from('pong')]
 
-      t.pass('thread joined')
-    })
-    .end('ping')
+  for (const data of expected) {
+    port.send(data)
+  }
+
+  for await (const data of port) {
+    t.alike(data, expected.shift())
+    if (expected.length === 0) break
+  }
+
+  await port.close()
+
+  thread.join()
 })
