@@ -18,8 +18,7 @@ enum {
   bare_channel_port_state_waiting = 0x2,
   bare_channel_port_state_ended = 0x4,
   bare_channel_port_state_destroying = 0x8,
-  bare_channel_port_state_destroyed = 0x16,
-  bare_channel_port_state_max = 0x32
+  bare_channel_port_state_destroyed = 0x16
 } bare_channel_port_state_t;
 
 struct bare_channel_message_s {
@@ -333,7 +332,7 @@ bare_channel_port_wait (js_env_t *env, js_callback_info_t *info) {
   while (port->cursors.read == port->cursors.write) {
     port->state |= bare_channel_port_state_waiting;
     uv_sem_wait(&port->wait);
-    port->state &= (bare_channel_port_state_max - 1) ^ bare_channel_port_state_waiting;
+    port->state &= ~bare_channel_port_state_waiting;
   }
 
   return NULL;
