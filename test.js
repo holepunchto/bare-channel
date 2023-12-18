@@ -104,3 +104,45 @@ test('recv blocking', async (t) => {
 
   thread.join()
 })
+
+test('big echo', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+  t.teardown(() => channel.destroy())
+
+  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
+    const Channel = require('.')
+
+    const channel = Channel.from(handle)
+    const port = channel.connect()
+
+    for await (const data of port) {
+      await port.send(data)
+    }
+  })
+
+  const port = channel.connect()
+  const sent = [Buffer.from('ping')]
+
+  for (let i = 0; i < 1e5; i++) sent.push(sent[0])
+
+  const consume = t.test('consume', async (t) => {
+    const recv = []
+    for await (const value of port) {
+      recv.push(value)
+      if (recv.length === sent.length) break
+    }
+
+    await port.close()
+
+    t.alike(recv, sent)
+  })
+
+  for (const data of sent) {
+    await port.send(data)
+  }
+
+  await consume
+  thread.join()
+})

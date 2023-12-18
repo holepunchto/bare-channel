@@ -35,6 +35,7 @@ class Port extends events.EventEmitter {
 
     this._closing = null
     this._buffer = new FIFO()
+    this._backpressured = false
 
     this._drainedPromise = null
     this._drainedQueue = (resolve) => { this._ondrained = resolve }
@@ -69,13 +70,15 @@ class Port extends events.EventEmitter {
 
   async send (value) {
     if (typeof value === 'string') value = Buffer.from(value)
-    while (this._drainedPromise !== null) await this._drainedPromise
 
-    if (this._closing !== null) return false
-    if (binding.portWrite(this.handle, value)) return true
+    while (true) {
+      while (this._drainedPromise !== null) await this._drainedPromise
 
-    this._drainedPromise = new Promise(this._drainedQueue)
-    return this._drainedPromise
+      if (this._closing !== null) return false
+      if (binding.portWrite(this.handle, value)) break
+
+      if (this._drainedPromise === null) this._drainedPromise = new Promise(this._drainedQueue)
+    }
   }
 
   _recvSync () {
@@ -141,6 +144,7 @@ class Port extends events.EventEmitter {
   }
 
   _wait () {
+    if (this._backpressured) this._onflush()
     if (this._buffer.length > 0 || this._closing !== null) return Promise.resolve(this._closing === null)
     if (!this._waitPromise) this._waitPromise = new Promise(this._waitQueue)
     return this._waitPromise
@@ -157,12 +161,16 @@ class Port extends events.EventEmitter {
   }
 
   _onflush () {
+    this._backpressured = false
+
     while (this._buffer.length < MAX_BUFFER) {
       const value = binding.portRead(this.handle)
-      if (value === null) break
+      if (value === null) return
       this._buffer.push(ArrayBuffer.isView(value) ? Buffer.coerce(value) : value)
       this._onactive()
     }
+
+    this._backpressured = true
   }
 
   _onactive () {
