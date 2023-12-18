@@ -96,7 +96,7 @@ test('recv blocking', async (t) => {
   }
 
   while (true) {
-    t.alike(port.recv(true), expected.shift())
+    t.alike(port.recvSync(), expected.shift())
     if (expected.length === 0) break
   }
 

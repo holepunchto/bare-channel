@@ -81,7 +81,7 @@ class Port extends events.EventEmitter {
     }
   }
 
-  _recvSync () {
+  recvSync () {
     while (true) {
       if (this._closing !== null) return null
 
@@ -95,16 +95,12 @@ class Port extends events.EventEmitter {
     }
   }
 
-  async _recvAsync () {
+  async recv () {
     do {
       if (this._buffer.length) return this._buffer.shift()
     } while (await this._wait())
 
     return null
-  }
-
-  recv (sync = false) {
-    return sync ? this._recvSync() : this._recvAsync()
   }
 
   async * [Symbol.asyncIterator] () {
