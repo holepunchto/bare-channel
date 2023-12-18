@@ -69,11 +69,21 @@ class Port extends events.EventEmitter {
   }
 
   recv (wait = false) {
-    if (this._closing !== null) return null
+    while (true) {
+      if (this._closing !== null) return null
 
-    if (this._recv.length === 0) return null
+      if (this._recv.length === 0) {
+        if (wait) {
+          binding.portWait(this.handle)
+          this._onflush()
+          continue
+        }
 
-    return this._recv.shift()
+        return null
+      }
+
+      return this._recv.shift()
+    }
   }
 
   close () {

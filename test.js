@@ -36,3 +36,37 @@ test('basic', async (t) => {
 
   thread.join()
 })
+
+test('basic blocking', async (t) => {
+  t.plan(2)
+
+  const channel = new Channel()
+  t.teardown(() => channel.destroy())
+
+  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
+    const Channel = require('.')
+
+    const channel = Channel.from(handle)
+    const port = channel.connect()
+
+    for await (const data of port) {
+      port.send(data)
+    }
+  })
+
+  const port = channel.connect()
+  const expected = [Buffer.from('ping'), Buffer.from('pong')]
+
+  for (const data of expected) {
+    port.send(data)
+  }
+
+  while (true) {
+    t.alike(port.recv(true), expected.shift())
+    if (expected.length === 0) break
+  }
+
+  await port.close()
+
+  thread.join()
+})

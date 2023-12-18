@@ -15,9 +15,11 @@ typedef struct bare_channel_message_s bare_channel_message_t;
 
 enum {
   bare_channel_port_state_inited = 0x1,
-  bare_channel_port_state_ended = 0x2,
-  bare_channel_port_state_destroying = 0x4,
-  bare_channel_port_state_destroyed = 0x8,
+  bare_channel_port_state_waiting = 0x2,
+  bare_channel_port_state_ended = 0x4,
+  bare_channel_port_state_destroying = 0x8,
+  bare_channel_port_state_destroyed = 0x16,
+  bare_channel_port_state_max = 0x32
 } bare_channel_port_state_t;
 
 struct bare_channel_message_s {
@@ -40,6 +42,8 @@ struct bare_channel_port_s {
   uint8_t id;
 
   bare_channel_t *channel;
+
+  uv_sem_t wait;
 
   atomic_int state;
 
@@ -160,6 +164,7 @@ on_close (uv_handle_t *handle) {
   err = js_delete_reference(env, port->ctx);
   assert(err == 0);
 
+  uv_sem_destroy(&port->wait);
   port->state = bare_channel_port_state_destroyed;
 
   js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
@@ -240,6 +245,8 @@ bare_channel_port_init (js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[channel->next_port++];
 
+  uv_sem_init(&port->wait, 1);
+
   port->env = env;
 
   err = js_create_reference(env, argv[1], 1, &port->ctx);
@@ -303,6 +310,31 @@ bare_channel_port_destroy (js_env_t *env, js_callback_info_t *info) {
   uv_close((uv_handle_t *) &port->signals.drain, on_close);
 
   uv_close((uv_handle_t *) &port->signals.flush, on_close);
+
+  return NULL;
+}
+
+static js_value_t *
+bare_channel_port_wait (js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_channel_port_t *port;
+  err = js_get_value_external(env, argv[0], (void **) &port);
+  assert(err == 0);
+
+  while (port->cursors.read == port->cursors.write) {
+    port->state |= bare_channel_port_state_waiting;
+    uv_sem_wait(&port->wait);
+    port->state &= (bare_channel_port_state_max - 1) ^ bare_channel_port_state_waiting;
+  }
 
   return NULL;
 }
@@ -501,7 +533,11 @@ bare_channel_port_write (js_env_t *env, js_callback_info_t *info) {
     receiver->cursors.write = next;
 
     if (receiver->state & bare_channel_port_state_inited) {
-      uv_async_send(&receiver->signals.flush);
+      if (receiver->state & bare_channel_port_state_waiting) {
+        uv_sem_post(&receiver->wait);
+      } else {
+        uv_async_send(&receiver->signals.flush);
+      }
     }
   }
 
@@ -567,6 +603,7 @@ init (js_env_t *env, js_value_t *exports) {
 
   V("portInit", bare_channel_port_init)
   V("portDestroy", bare_channel_port_destroy)
+  V("portWait", bare_channel_port_wait)
   V("portRead", bare_channel_port_read)
   V("portWrite", bare_channel_port_write)
   V("portEnd", bare_channel_port_end)
