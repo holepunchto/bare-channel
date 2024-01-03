@@ -1,6 +1,6 @@
 # bare-channel
 
-Asynchronous inter-thread messaging for JavaScript.
+Inter-thread messaging for JavaScript.
 
 ```
 npm i bare-channel
