@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <uv.h>
 
 #define BARE_CHANNEL_PORT_CAPACITY 1024
