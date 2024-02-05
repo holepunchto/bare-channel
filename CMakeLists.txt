@@ -11,3 +11,11 @@ target_sources(
   PRIVATE
     binding.c
 )
+
+if(MSVC)
+  target_compile_options(
+    bare_channel
+    PRIVATE
+      /experimental:c11atomics
+  )
+endif()
