@@ -1,7 +1,7 @@
 {
   "name": "bare-channel",
   "version": "3.0.0",
-  "description": "Asynchronous inter-thread messaging for JavaScript",
+  "description": "Inter-thread messaging for JavaScript",
   "main": "index.js",
   "files": [
     "index.js",
@@ -10,6 +10,9 @@
     "CMakeLists.txt",
     "prebuilds"
   ],
+  "addon": {
+    "target": "bare_channel"
+  },
   "scripts": {
     "test": "standard && bare test.js"
   },
