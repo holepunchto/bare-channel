@@ -1,6 +1,6 @@
 {
   "name": "bare-channel",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Inter-thread messaging for JavaScript",
   "main": "index.js",
   "files": [
