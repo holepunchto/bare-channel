@@ -10,9 +10,7 @@
     "CMakeLists.txt",
     "prebuilds"
   ],
-  "addon": {
-    "target": "bare_channel"
-  },
+  "addon": true,
   "scripts": {
     "test": "standard && bare test.js"
   },
