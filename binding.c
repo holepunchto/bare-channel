@@ -83,16 +83,16 @@ on_drain (uv_async_t *handle) {
 
   js_env_t *env = port->env;
 
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
   js_value_t *ctx;
   err = js_get_reference_value(env, port->ctx, &ctx);
   assert(err == 0);
 
   js_value_t *on_read;
   err = js_get_reference_value(env, port->on_drain, &on_read);
-  assert(err == 0);
-
-  js_handle_scope_t *scope;
-  err = js_open_handle_scope(env, &scope);
   assert(err == 0);
 
   js_call_function(env, ctx, on_read, 0, NULL, NULL);
@@ -109,16 +109,16 @@ on_flush (uv_async_t *handle) {
 
   js_env_t *env = port->env;
 
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
   js_value_t *ctx;
   err = js_get_reference_value(env, port->ctx, &ctx);
   assert(err == 0);
 
   js_value_t *on_write;
   err = js_get_reference_value(env, port->on_flush, &on_write);
-  assert(err == 0);
-
-  js_handle_scope_t *scope;
-  err = js_open_handle_scope(env, &scope);
   assert(err == 0);
 
   js_call_function(env, ctx, on_write, 0, NULL, NULL);
