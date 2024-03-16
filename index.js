@@ -203,7 +203,7 @@ class Port extends EventEmitter {
     this.remoteClosed = true
 
     if (this._onremoteclose !== null) this._onremoteclose()
-    else this.close() // run in bg
+    else this.close()
   }
 
   _ondestroy () {
@@ -214,7 +214,5 @@ class Port extends EventEmitter {
 }
 
 Bare.on('exit', async () => {
-  for (const port of Port._ports) {
-    port.ref()
-  }
+  for (const port of Port._ports) port.ref()
 })
