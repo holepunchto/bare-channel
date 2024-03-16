@@ -11,11 +11,11 @@ module.exports = exports = class Channel {
       handle = binding.channelInit()
     } = opts
 
+    this.destroyed = false
+
     this.handle = handle
 
     binding.channelRef(this.handle)
-
-    Channel._channels.add(this)
   }
 
   connect () {
@@ -23,21 +23,21 @@ module.exports = exports = class Channel {
   }
 
   destroy () {
+    if (this.destroyed) return
+    this.destroyed = true
     binding.channelDestroy(this.handle)
-
-    Channel._channels.delete(this)
   }
 
   static from (handle, opts = {}) {
     return new Channel({ ...opts, handle })
   }
-
-  static _channels = new Set()
 }
 
 class Port extends EventEmitter {
   constructor (channel) {
     super()
+
+    this._channel = channel
 
     this._closing = null
     this._buffer = new FIFO()
@@ -213,15 +213,7 @@ class Port extends EventEmitter {
 }
 
 Bare.on('exit', async () => {
-  const closing = []
-
   for (const port of Port._ports) {
-    closing.push(port.close())
-  }
-
-  await Promise.allSettled(closing)
-
-  for (const channel of exports._channels) {
-    channel.destroy()
+    port.ref()
   }
 })
