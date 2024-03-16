@@ -70,6 +70,7 @@ struct bare_channel_port_s {
 };
 
 struct bare_channel_s {
+  atomic_int refs;
   atomic_int next_port;
 
   bare_channel_port_t ports[2];
@@ -179,6 +180,7 @@ bare_channel_init (js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_t *channel = malloc(sizeof(bare_channel_t));
 
+  channel->refs = 0;
   channel->next_port = 0;
 
   for (uint8_t i = 0; i < 2; i++) {
@@ -199,6 +201,27 @@ bare_channel_init (js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
+bare_channel_ref (js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_channel_t *channel;
+  err = js_get_value_external(env, argv[0], (void **) &channel);
+  assert(err == 0);
+
+  channel->refs++;
+
+  return NULL;
+}
+
+static js_value_t *
 bare_channel_destroy (js_env_t *env, js_callback_info_t *info) {
   int err;
 
@@ -214,7 +237,7 @@ bare_channel_destroy (js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_external(env, argv[0], (void **) &channel);
   assert(err == 0);
 
-  free(channel);
+  if (--channel->refs == 0) free(channel);
 
   return NULL;
 }
@@ -591,6 +614,52 @@ bare_channel_port_end (js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
+bare_channel_port_ref (js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_channel_port_t *port;
+  err = js_get_value_external(env, argv[0], (void **) &port);
+  assert(err == 0);
+
+  uv_ref((uv_handle_t *) &port->signals.drain);
+
+  uv_ref((uv_handle_t *) &port->signals.flush);
+
+  return NULL;
+}
+
+static js_value_t *
+bare_channel_port_unref (js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_channel_port_t *port;
+  err = js_get_value_external(env, argv[0], (void **) &port);
+  assert(err == 0);
+
+  uv_unref((uv_handle_t *) &port->signals.drain);
+
+  uv_unref((uv_handle_t *) &port->signals.flush);
+
+  return NULL;
+}
+
+static js_value_t *
 init (js_env_t *env, js_value_t *exports) {
 #define V(name, fn) \
   { \
@@ -600,6 +669,7 @@ init (js_env_t *env, js_value_t *exports) {
   }
   V("channelInit", bare_channel_init)
   V("channelDestroy", bare_channel_destroy)
+  V("channelRef", bare_channel_ref)
 
   V("portInit", bare_channel_port_init)
   V("portDestroy", bare_channel_port_destroy)
@@ -607,6 +677,8 @@ init (js_env_t *env, js_value_t *exports) {
   V("portRead", bare_channel_port_read)
   V("portWrite", bare_channel_port_write)
   V("portEnd", bare_channel_port_end)
+  V("portRef", bare_channel_port_ref)
+  V("portUnref", bare_channel_port_unref)
 #undef V
 
   return exports;

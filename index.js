@@ -1,4 +1,5 @@
-const events = require('bare-events')
+/* global Bare */
+const EventEmitter = require('bare-events')
 const FIFO = require('fast-fifo')
 const binding = require('./binding')
 
@@ -11,6 +12,10 @@ module.exports = exports = class Channel {
     } = opts
 
     this.handle = handle
+
+    binding.channelRef(this.handle)
+
+    Channel._channels.add(this)
   }
 
   connect () {
@@ -19,19 +24,20 @@ module.exports = exports = class Channel {
 
   destroy () {
     binding.channelDestroy(this.handle)
+
+    Channel._channels.delete(this)
   }
 
   static from (handle, opts = {}) {
     return new Channel({ ...opts, handle })
   }
+
+  static _channels = new Set()
 }
 
-class Port extends events.EventEmitter {
+class Port extends EventEmitter {
   constructor (channel) {
     super()
-
-    this.closed = false
-    this.remoteClosed = false
 
     this._closing = null
     this._buffer = new FIFO()
@@ -48,12 +54,17 @@ class Port extends events.EventEmitter {
     this._ondestroyed = null
     this._onremoteclose = null
 
+    this.closed = false
+    this.remoteClosed = false
+
     this.handle = binding.portInit(channel.handle, this,
       this._ondrain,
       this._onflush,
       this._onend,
       this._ondestroy
     )
+
+    Port._ports.add(this)
   }
 
   get buffered () {
@@ -68,17 +79,12 @@ class Port extends events.EventEmitter {
     return this._closing !== null
   }
 
-  async send (value) {
-    if (typeof value === 'string') value = Buffer.from(value)
+  async recv () {
+    do {
+      if (this._buffer.length) return this._buffer.shift()
+    } while (await this._wait())
 
-    while (true) {
-      while (this._drainedPromise !== null) await this._drainedPromise
-
-      if (this._closing !== null) return false
-      if (binding.portWrite(this.handle, value)) break
-
-      if (this._drainedPromise === null) this._drainedPromise = new Promise(this._drainedQueue)
-    }
+    return null
   }
 
   recvSync () {
@@ -95,12 +101,17 @@ class Port extends events.EventEmitter {
     }
   }
 
-  async recv () {
-    do {
-      if (this._buffer.length) return this._buffer.shift()
-    } while (await this._wait())
+  async send (value) {
+    if (typeof value === 'string') value = Buffer.from(value)
 
-    return null
+    while (true) {
+      while (this._drainedPromise !== null) await this._drainedPromise
+
+      if (this._closing !== null) return false
+      if (binding.portWrite(this.handle, value)) break
+
+      if (this._drainedPromise === null) this._drainedPromise = new Promise(this._drainedQueue)
+    }
   }
 
   async * [Symbol.asyncIterator] () {
@@ -117,26 +128,34 @@ class Port extends events.EventEmitter {
   }
 
   async _close () {
-    await Promise.resolve() // force one tick to avoid re-entry
+    await Promise.resolve() // Avoid re-entry
+
     this.emit('closing')
 
-    // drain any pending writes
     while (this._drainedPromise !== null) await this._drainedPromise
 
     binding.portEnd(this.handle)
 
-    // wait for the remote to signal end also
     if (!this.remoteClosed) await new Promise((resolve) => { this._onremoteclose = resolve })
     this._onremoteclose = null
 
-    // now destroy
     const destroyed = new Promise((resolve) => { this._ondestroyed = resolve })
     binding.portDestroy(this.handle)
     await destroyed
     this._ondestroyed = null
 
+    Port._ports.delete(this)
+
     this.closed = true
     this.emit('close')
+  }
+
+  ref () {
+    binding.portRef(this.handle)
+  }
+
+  unref () {
+    binding.portUnref(this.handle)
   }
 
   _wait () {
@@ -189,4 +208,20 @@ class Port extends events.EventEmitter {
   _ondestroy () {
     this._ondestroyed()
   }
+
+  static _ports = new Set()
 }
+
+Bare.on('exit', async () => {
+  const closing = []
+
+  for (const port of Port._ports) {
+    closing.push(port.close())
+  }
+
+  await Promise.allSettled(closing)
+
+  for (const channel of exports._channels) {
+    channel.destroy()
+  }
+})
