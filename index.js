@@ -155,6 +155,7 @@ class Port extends EventEmitter {
   }
 
   unref () {
+    if (Bare.exiting) return // Unref'ed ports during exit is unsafe
     binding.portUnref(this.handle)
   }
 
