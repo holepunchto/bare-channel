@@ -16,15 +16,15 @@ test('basic', async (t) => {
     const port = channel.connect()
 
     for await (const data of port) {
-      port.send(data)
+      port.write(data)
     }
   })
 
   const port = channel.connect()
-  const expected = [Buffer.from('ping'), Buffer.from('pong')]
+  const expected = ['ping', 'pong']
 
   for (const data of expected) {
-    port.send(data)
+    port.write(data)
   }
 
   for await (const data of port) {
@@ -37,7 +37,7 @@ test('basic', async (t) => {
   thread.join()
 })
 
-test('recv async', async (t) => {
+test('read async', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
@@ -50,19 +50,19 @@ test('recv async', async (t) => {
     const port = channel.connect()
 
     for await (const data of port) {
-      port.send(data)
+      port.write(data)
     }
   })
 
   const port = channel.connect()
-  const expected = [Buffer.from('ping'), Buffer.from('pong')]
+  const expected = ['ping', 'pong']
 
   for (const data of expected) {
-    port.send(data)
+    port.write(data)
   }
 
   while (true) {
-    t.alike(await port.recv(), expected.shift())
+    t.alike(await port.read(), expected.shift())
     if (expected.length === 0) break
   }
 
@@ -71,7 +71,7 @@ test('recv async', async (t) => {
   thread.join()
 })
 
-test('recv blocking', async (t) => {
+test('read blocking', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
@@ -84,19 +84,19 @@ test('recv blocking', async (t) => {
     const port = channel.connect()
 
     for await (const data of port) {
-      port.send(data)
+      port.write(data)
     }
   })
 
   const port = channel.connect()
-  const expected = [Buffer.from('ping'), Buffer.from('pong')]
+  const expected = ['ping', 'pong']
 
   for (const data of expected) {
-    port.send(data)
+    port.write(data)
   }
 
   while (true) {
-    t.alike(port.recvSync(), expected.shift())
+    t.alike(port.readSync(), expected.shift())
     if (expected.length === 0) break
   }
 
@@ -118,31 +118,33 @@ test('big echo', async (t) => {
     const port = channel.connect()
 
     for await (const data of port) {
-      await port.send(data)
+      await port.write(data)
     }
   })
 
   const port = channel.connect()
-  const sent = [Buffer.from('ping')]
+  const sent = ['ping']
 
   for (let i = 0; i < 1e5; i++) sent.push(sent[0])
 
   const consume = t.test('consume', async (t) => {
-    const recv = []
+    const read = []
+
     for await (const value of port) {
-      recv.push(value)
-      if (recv.length === sent.length) break
+      read.push(value)
+      if (read.length === sent.length) break
     }
 
-    await port.close()
-
-    t.alike(recv, sent)
+    t.alike(read, sent)
   })
 
   for (const data of sent) {
-    await port.send(data)
+    await port.write(data)
   }
 
   await consume
+
+  await port.close()
+
   thread.join()
 })

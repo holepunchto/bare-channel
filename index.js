@@ -1,5 +1,6 @@
 /* global Bare */
 const EventEmitter = require('bare-events')
+const structuredClone = require('bare-structured-clone')
 const FIFO = require('fast-fifo')
 const binding = require('./binding')
 
@@ -79,7 +80,7 @@ class Port extends EventEmitter {
     return this._closing !== null
   }
 
-  async recv () {
+  async read () {
     do {
       if (this._buffer.length) return this._buffer.shift()
     } while (await this._wait())
@@ -87,7 +88,7 @@ class Port extends EventEmitter {
     return null
   }
 
-  recvSync () {
+  readSync () {
     while (true) {
       if (this._closing !== null) return null
 
@@ -101,14 +102,22 @@ class Port extends EventEmitter {
     }
   }
 
-  async send (value) {
-    if (typeof value === 'string') value = Buffer.from(value)
+  async write (value, opts = {}) {
+    const serialized = structuredClone.serializeWithTransfer(value, opts.transfer)
+
+    const state = { start: 0, end: 0, buffer: null }
+
+    structuredClone.preencode(state, serialized)
+
+    const data = state.buffer = Buffer.allocUnsafe(state.end)
+
+    structuredClone.encode(state, serialized)
 
     while (true) {
       while (this._drainedPromise !== null) await this._drainedPromise
 
       if (this._closing !== null) return false
-      if (binding.portWrite(this.handle, value)) break
+      if (binding.portWrite(this.handle, data)) break
 
       if (this._drainedPromise === null) this._drainedPromise = new Promise(this._drainedQueue)
     }
@@ -180,9 +189,14 @@ class Port extends EventEmitter {
     this._backpressured = false
 
     while (this._buffer.length < MAX_BUFFER) {
-      const value = binding.portRead(this.handle)
-      if (value === null) return
-      this._buffer.push(ArrayBuffer.isView(value) ? Buffer.coerce(value) : value)
+      const data = binding.portRead(this.handle)
+      if (data === null) return
+
+      const state = { start: 0, end: data.byteLength, buffer: data }
+
+      const value = structuredClone.deserializeWithTransfer(structuredClone.decode(state))
+
+      this._buffer.push(value)
       this._onactive()
     }
 

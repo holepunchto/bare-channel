@@ -25,16 +25,11 @@ enum {
 struct bare_channel_message_s {
   enum {
     bare_channel_message_end,
-    bare_channel_message_buffer,
-    bare_channel_message_arraybuffer,
-    bare_channel_message_sharedarraybuffer,
-    bare_channel_message_external,
+    bare_channel_message_data,
   } type;
 
   union {
     uv_buf_t buffer;
-    js_arraybuffer_backing_store_t *backing_store;
-    void *external;
   };
 };
 
@@ -166,6 +161,7 @@ on_close (uv_handle_t *handle) {
   assert(err == 0);
 
   uv_sem_destroy(&port->wait);
+
   port->state = bare_channel_port_state_destroyed;
 
   js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
@@ -355,7 +351,9 @@ bare_channel_port_wait (js_env_t *env, js_callback_info_t *info) {
 
   while (port->cursors.read == port->cursors.write) {
     port->state |= bare_channel_port_state_waiting;
+
     uv_sem_wait(&port->wait);
+
     port->state &= ~bare_channel_port_state_waiting;
   }
 
@@ -405,7 +403,7 @@ bare_channel_port_read (js_env_t *env, js_callback_info_t *info) {
       break;
     }
 
-    case bare_channel_message_buffer:
+    case bare_channel_message_data:
     default: {
       js_value_t *arraybuffer;
 
@@ -418,29 +416,6 @@ bare_channel_port_read (js_env_t *env, js_callback_info_t *info) {
       free(message->buffer.base);
 
       err = js_create_typedarray(env, js_uint8_array, message->buffer.len, arraybuffer, 0, &result);
-      assert(err == 0);
-      break;
-    }
-
-    case bare_channel_message_arraybuffer: {
-      void *data;
-      err = js_create_arraybuffer(env, message->buffer.len, &data, &result);
-      assert(err == 0);
-
-      memcpy(data, message->buffer.base, message->buffer.len);
-
-      free(message->buffer.base);
-      break;
-    }
-
-    case bare_channel_message_sharedarraybuffer: {
-      err = js_create_sharedarraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
-      assert(err == 0);
-      break;
-    }
-
-    case bare_channel_message_external: {
-      err = js_create_external(env, message->external, NULL, NULL, &result);
       assert(err == 0);
       break;
     }
@@ -482,76 +457,15 @@ bare_channel_port_write (js_env_t *env, js_callback_info_t *info) {
   else {
     bare_channel_message_t *message = &receiver->messages[receiver->cursors.write];
 
-    bool is_type;
+    message->type = bare_channel_message_data;
 
-    err = js_is_typedarray(env, argv[1], &is_type);
+    void *data;
+    err = js_get_typedarray_info(env, argv[1], NULL, &data, &message->buffer.len, NULL, NULL);
     assert(err == 0);
 
-    if (is_type) {
-      message->type = bare_channel_message_buffer;
-    } else {
-      err = js_is_arraybuffer(env, argv[1], &is_type);
-      assert(err == 0);
+    message->buffer.base = malloc(message->buffer.len);
 
-      if (is_type) {
-        message->type = bare_channel_message_arraybuffer;
-      } else {
-        err = js_is_sharedarraybuffer(env, argv[1], &is_type);
-        assert(err == 0);
-
-        if (is_type) {
-          message->type = bare_channel_message_sharedarraybuffer;
-        } else {
-          err = js_is_external(env, argv[1], &is_type);
-          assert(err == 0);
-
-          if (is_type) {
-            message->type = bare_channel_message_external;
-          } else {
-            js_throw_error(env, NULL, "supported value");
-            return NULL;
-          }
-        }
-      }
-    }
-
-    switch (message->type) {
-    case bare_channel_message_buffer:
-    default: {
-      void *data;
-      err = js_get_typedarray_info(env, argv[1], NULL, &data, &message->buffer.len, NULL, NULL);
-      assert(err == 0);
-
-      message->buffer.base = malloc(message->buffer.len);
-
-      memcpy(message->buffer.base, data, message->buffer.len);
-      break;
-    }
-
-    case bare_channel_message_arraybuffer: {
-
-      void *data;
-      err = js_get_arraybuffer_info(env, argv[1], &data, &message->buffer.len);
-      assert(err == 0);
-
-      message->buffer.base = malloc(message->buffer.len);
-
-      memcpy(message->buffer.base, data, message->buffer.len);
-      break;
-    }
-
-    case bare_channel_message_sharedarraybuffer: {
-      err = js_get_sharedarraybuffer_backing_store(env, argv[1], &message->backing_store);
-      assert(err == 0);
-      break;
-    }
-
-    case bare_channel_message_external: {
-      err = js_get_value_external(env, argv[1], &message->external);
-      assert(err == 0);
-      break;
-    }
-    }
+    memcpy(message->buffer.base, data, message->buffer.len);
 
     receiver->cursors.write = next;
 

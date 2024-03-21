@@ -26,6 +26,7 @@
   "homepage": "https://github.com/holepunchto/bare-channel#readme",
   "dependencies": {
     "bare-events": "^2.0.0",
+    "bare-structured-clone": "^1.0.2",
     "fast-fifo": "^1.3.2"
   },
   "devDependencies": {
