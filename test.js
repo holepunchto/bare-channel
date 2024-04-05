@@ -7,7 +7,6 @@ test('basic', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
-  t.teardown(() => channel.destroy())
 
   const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
     const Channel = require('.')
@@ -41,7 +40,6 @@ test('read async', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
-  t.teardown(() => channel.destroy())
 
   const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
     const Channel = require('.')
@@ -75,7 +73,6 @@ test('read blocking', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
-  t.teardown(() => channel.destroy())
 
   const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
     const Channel = require('.')
@@ -109,7 +106,6 @@ test('big echo', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
-  t.teardown(() => channel.destroy())
 
   const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
     const Channel = require('.')

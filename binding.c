@@ -4,7 +4,6 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 #include <uv.h>
 
@@ -29,13 +28,11 @@ struct bare_channel_message_s {
   } type;
 
   union {
-    uv_buf_t buffer;
+    js_arraybuffer_backing_store_t *backing_store;
   };
 };
 
 struct bare_channel_port_s {
-  uint8_t id;
-
   bare_channel_t *channel;
 
   uv_sem_t wait;
@@ -65,7 +62,6 @@ struct bare_channel_port_s {
 };
 
 struct bare_channel_s {
-  atomic_int refs;
   atomic_int next_port;
 
   bare_channel_port_t ports[2];
@@ -174,68 +170,24 @@ static js_value_t *
 bare_channel_init (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  bare_channel_t *channel = malloc(sizeof(bare_channel_t));
+  js_value_t *arraybuffer;
 
-  channel->refs = 0;
+  bare_channel_t *channel;
+  err = js_create_sharedarraybuffer(env, sizeof(bare_channel_t), (void **) &channel, &arraybuffer);
+  assert(err == 0);
+
   channel->next_port = 0;
 
   for (uint8_t i = 0; i < 2; i++) {
     bare_channel_port_t *port = &channel->ports[i];
 
-    port->id = i;
     port->channel = channel;
     port->state = 0;
     port->cursors.read = 0;
     port->cursors.write = 0;
   }
 
-  js_value_t *result;
-  err = js_create_external(env, (void *) channel, NULL, NULL, &result);
-  assert(err == 0);
-
-  return result;
-}
-
-static js_value_t *
-bare_channel_ref (js_env_t *env, js_callback_info_t *info) {
-  int err;
-
-  size_t argc = 1;
-  js_value_t *argv[1];
-
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
-  assert(err == 0);
-
-  assert(argc == 1);
-
-  bare_channel_t *channel;
-  err = js_get_value_external(env, argv[0], (void **) &channel);
-  assert(err == 0);
-
-  channel->refs++;
-
-  return NULL;
-}
-
-static js_value_t *
-bare_channel_destroy (js_env_t *env, js_callback_info_t *info) {
-  int err;
-
-  size_t argc = 1;
-  js_value_t *argv[1];
-
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
-  assert(err == 0);
-
-  assert(argc == 1);
-
-  bare_channel_t *channel;
-  err = js_get_value_external(env, argv[0], (void **) &channel);
-  assert(err == 0);
-
-  if (--channel->refs == 0) free(channel);
-
-  return NULL;
+  return arraybuffer;
 }
 
 static js_value_t *
@@ -251,7 +203,7 @@ bare_channel_port_init (js_env_t *env, js_callback_info_t *info) {
   assert(argc == 6);
 
   bare_channel_t *channel;
-  err = js_get_value_external(env, argv[0], (void **) &channel);
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
 
   if (channel->next_port >= 2) {
@@ -262,7 +214,9 @@ bare_channel_port_init (js_env_t *env, js_callback_info_t *info) {
   uv_loop_t *loop;
   js_get_env_loop(env, &loop);
 
-  bare_channel_port_t *port = &channel->ports[channel->next_port++];
+  int id = channel->next_port++;
+
+  bare_channel_port_t *port = &channel->ports[id];
 
   uv_sem_init(&port->wait, 1);
 
@@ -298,29 +252,33 @@ bare_channel_port_init (js_env_t *env, js_callback_info_t *info) {
   uv_async_send(&port->signals.flush);
 
   js_value_t *result;
-  err = js_create_external(env, (void *) port, NULL, NULL, &result);
+  err = js_create_int32(env, id, &result);
   assert(err == 0);
 
   return result;
-
-  return NULL;
 }
 
 static js_value_t *
 bare_channel_port_destroy (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 2;
+  js_value_t *argv[2];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 2);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
+
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
 
   port->state |= bare_channel_port_state_destroying;
 
@@ -337,17 +295,23 @@ static js_value_t *
 bare_channel_port_wait (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 2;
+  js_value_t *argv[2];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 2);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
+
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
 
   while (port->cursors.read == port->cursors.write) {
     port->state |= bare_channel_port_state_waiting;
@@ -364,19 +328,24 @@ static js_value_t *
 bare_channel_port_read (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 2;
+  js_value_t *argv[2];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 2);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
 
-  bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
+  bare_channel_port_t *sender = &channel->ports[(id + 1) & 1];
 
   js_value_t *result;
 
@@ -404,21 +373,13 @@ bare_channel_port_read (js_env_t *env, js_callback_info_t *info) {
     }
 
     case bare_channel_message_data:
-    default: {
-      js_value_t *arraybuffer;
-
-      void *data;
-      err = js_create_arraybuffer(env, message->buffer.len, &data, &arraybuffer);
+    default:
+      err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
       assert(err == 0);
 
-      memcpy(data, message->buffer.base, message->buffer.len);
-
-      free(message->buffer.base);
-
-      err = js_create_typedarray(env, js_uint8_array, message->buffer.len, arraybuffer, 0, &result);
+      err = js_release_arraybuffer_backing_store(env, message->backing_store);
       assert(err == 0);
       break;
-    }
     }
 
     port->cursors.read = (port->cursors.read + 1) % BARE_CHANNEL_PORT_CAPACITY;
@@ -435,19 +396,24 @@ static js_value_t *
 bare_channel_port_write (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 2;
-  js_value_t *argv[2];
+  size_t argc = 3;
+  js_value_t *argv[3];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 2);
+  assert(argc == 3);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
 
-  bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
+  bare_channel_port_t *receiver = &channel->ports[(id + 1) & 1];
 
   bool success = true;
 
@@ -459,13 +425,11 @@ bare_channel_port_write (js_env_t *env, js_callback_info_t *info) {
 
     message->type = bare_channel_message_data;
 
-    void *data;
-    err = js_get_typedarray_info(env, argv[1], NULL, &data, &message->buffer.len, NULL, NULL);
+    err = js_get_arraybuffer_backing_store(env, argv[2], &message->backing_store);
     assert(err == 0);
 
-    message->buffer.base = malloc(message->buffer.len);
-
-    memcpy(message->buffer.base, data, message->buffer.len);
+    err = js_detach_arraybuffer(env, argv[2]);
+    assert(err == 0);
 
     receiver->cursors.write = next;
 
@@ -489,19 +453,24 @@ static js_value_t *
 bare_channel_port_end (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 2;
+  js_value_t *argv[2];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 2);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
 
-  bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
+  bare_channel_port_t *receiver = &channel->ports[(id + 1) & 1];
 
   bool success = true;
 
@@ -531,17 +500,23 @@ static js_value_t *
 bare_channel_port_ref (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 2;
+  js_value_t *argv[2];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 2);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
+
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
 
   uv_ref((uv_handle_t *) &port->signals.drain);
 
@@ -554,17 +529,23 @@ static js_value_t *
 bare_channel_port_unref (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 2;
+  js_value_t *argv[2];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 2);
 
-  bare_channel_port_t *port;
-  err = js_get_value_external(env, argv[0], (void **) &port);
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
+
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
 
   uv_unref((uv_handle_t *) &port->signals.drain);
 
@@ -582,8 +563,6 @@ init (js_env_t *env, js_value_t *exports) {
     js_set_named_property(env, exports, name, val); \
   }
   V("channelInit", bare_channel_init)
-  V("channelDestroy", bare_channel_destroy)
-  V("channelRef", bare_channel_ref)
 
   V("portInit", bare_channel_port_init)
   V("portDestroy", bare_channel_port_destroy)

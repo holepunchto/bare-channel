@@ -12,21 +12,11 @@ module.exports = exports = class Channel {
       handle = binding.channelInit()
     } = opts
 
-    this.destroyed = false
-
     this.handle = handle
-
-    binding.channelRef(this.handle)
   }
 
   connect () {
     return new Port(this)
-  }
-
-  destroy () {
-    if (this.destroyed) return
-    this.destroyed = true
-    binding.channelDestroy(this.handle)
   }
 
   static from (handle, opts = {}) {
@@ -55,15 +45,15 @@ class Port extends EventEmitter {
     this._ondestroyed = null
     this._onremoteclose = null
 
-    this.closed = false
-    this.remoteClosed = false
-
-    this.handle = binding.portInit(channel.handle, this,
+    this._id = binding.portInit(channel.handle, this,
       this._ondrain,
       this._onflush,
       this._onend,
       this._ondestroy
     )
+
+    this.closed = false
+    this.remoteClosed = false
 
     Port._ports.add(this)
   }
@@ -93,7 +83,7 @@ class Port extends EventEmitter {
       if (this._closing !== null) return null
 
       if (this._buffer.length === 0) {
-        binding.portWait(this.handle)
+        binding.portWait(this._channel.handle, this._id)
         this._onflush()
         continue
       }
@@ -117,7 +107,7 @@ class Port extends EventEmitter {
       while (this._drainedPromise !== null) await this._drainedPromise
 
       if (this._closing !== null) return false
-      if (binding.portWrite(this.handle, data)) break
+      if (binding.portWrite(this._channel.handle, this._id, data.buffer)) break
 
       if (this._drainedPromise === null) this._drainedPromise = new Promise(this._drainedQueue)
     }
@@ -143,13 +133,13 @@ class Port extends EventEmitter {
 
     while (this._drainedPromise !== null) await this._drainedPromise
 
-    binding.portEnd(this.handle)
+    binding.portEnd(this._channel.handle, this._id)
 
     if (!this.remoteClosed) await new Promise((resolve) => { this._onremoteclose = resolve })
     this._onremoteclose = null
 
     const destroyed = new Promise((resolve) => { this._ondestroyed = resolve })
-    binding.portDestroy(this.handle)
+    binding.portDestroy(this._channel.handle, this._id)
     await destroyed
     this._ondestroyed = null
 
@@ -160,12 +150,12 @@ class Port extends EventEmitter {
   }
 
   ref () {
-    binding.portRef(this.handle)
+    binding.portRef(this._channel.handle, this._id)
   }
 
   unref () {
     if (Bare.exiting) return // Unref'ed ports during exit is unsafe
-    binding.portUnref(this.handle)
+    binding.portUnref(this._channel.handle, this._id)
   }
 
   _wait () {
@@ -189,10 +179,10 @@ class Port extends EventEmitter {
     this._backpressured = false
 
     while (this._buffer.length < MAX_BUFFER) {
-      const data = binding.portRead(this.handle)
+      const data = binding.portRead(this._channel.handle, this._id)
       if (data === null) return
 
-      const state = { start: 0, end: data.byteLength, buffer: data }
+      const state = { start: 0, end: data.byteLength, buffer: Buffer.from(data) }
 
       const value = structuredClone.deserializeWithTransfer(structuredClone.decode(state))
 

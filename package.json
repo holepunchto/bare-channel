@@ -2,7 +2,9 @@
   "name": "bare-channel",
   "version": "4.0.0",
   "description": "Inter-thread messaging for JavaScript",
-  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
   "files": [
     "index.js",
     "binding.c",
@@ -24,6 +26,9 @@
     "url": "https://github.com/holepunchto/bare-channel/issues"
   },
   "homepage": "https://github.com/holepunchto/bare-channel#readme",
+  "engines": {
+    "bare": ">=1.2.0"
+  },
   "dependencies": {
     "bare-events": "^2.0.0",
     "bare-structured-clone": "^1.0.2",
