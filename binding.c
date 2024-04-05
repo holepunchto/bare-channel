@@ -170,10 +170,10 @@ static js_value_t *
 bare_channel_init (js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  js_value_t *arraybuffer;
+  js_value_t *handle;
 
   bare_channel_t *channel;
-  err = js_create_sharedarraybuffer(env, sizeof(bare_channel_t), (void **) &channel, &arraybuffer);
+  err = js_create_sharedarraybuffer(env, sizeof(bare_channel_t), (void **) &channel, &handle);
   assert(err == 0);
 
   channel->next_port = 0;
@@ -187,7 +187,7 @@ bare_channel_init (js_env_t *env, js_callback_info_t *info) {
     port->cursors.write = 0;
   }
 
-  return arraybuffer;
+  return handle;
 }
 
 static js_value_t *
