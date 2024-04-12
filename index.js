@@ -9,10 +9,12 @@ const MAX_BUFFER = 128
 module.exports = exports = class Channel {
   constructor (opts = {}) {
     const {
-      handle = binding.channelInit()
+      handle = binding.channelInit(),
+      interfaces = []
     } = opts
 
     this.handle = handle
+    this.interfaces = interfaces
   }
 
   connect () {
@@ -93,7 +95,7 @@ class Port extends EventEmitter {
   }
 
   async write (value, opts = {}) {
-    const serialized = structuredClone.serializeWithTransfer(value, opts.transfer)
+    const serialized = structuredClone.serializeWithTransfer(value, opts.transfer, this._channel.interfaces)
 
     const state = { start: 0, end: 0, buffer: null }
 
@@ -184,7 +186,7 @@ class Port extends EventEmitter {
 
       const state = { start: 0, end: data.byteLength, buffer: Buffer.from(data) }
 
-      const value = structuredClone.deserializeWithTransfer(structuredClone.decode(state))
+      const value = structuredClone.deserializeWithTransfer(structuredClone.decode(state), this._channel.interfaces)
 
       this._buffer.push(value)
       this._onactive()

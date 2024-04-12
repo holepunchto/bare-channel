@@ -144,3 +144,56 @@ test('big echo', async (t) => {
 
   thread.join()
 })
+
+test('serializable interface', async (t) => {
+  class Foo {
+    constructor (foo) {
+      this.foo = foo
+    }
+
+    [Symbol.for('bare.serialize')] () {
+      return this.foo
+    }
+
+    static [Symbol.for('bare.deserialize')] (serialized) {
+      return new Foo(serialized)
+    }
+  }
+
+  const channel = new Channel({ interfaces: [Foo] })
+
+  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
+    const Channel = require('.')
+
+    class Foo {
+      constructor (foo) {
+        this.foo = foo
+      }
+
+      [Symbol.for('bare.serialize')] () {
+        return this.foo
+      }
+
+      static [Symbol.for('bare.deserialize')] (serialized) {
+        return new Foo(serialized)
+      }
+    }
+
+    const channel = Channel.from(handle, { interfaces: [Foo] })
+    const port = channel.connect()
+
+    await port.write(await port.read())
+  })
+
+  const port = channel.connect()
+
+  const expected = new Foo('foo')
+
+  await port.write(expected)
+
+  t.alike(expected, await port.read())
+
+  await port.close()
+
+  thread.join()
+})
