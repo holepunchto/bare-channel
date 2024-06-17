@@ -58,7 +58,7 @@ struct bare_channel_port_s {
   js_ref_t *on_drain;
   js_ref_t *on_flush;
   js_ref_t *on_end;
-  js_ref_t *on_destroy;
+  js_ref_t *on_close;
 };
 
 struct bare_channel_s {
@@ -68,7 +68,7 @@ struct bare_channel_s {
 };
 
 static void
-on_drain (uv_async_t *handle) {
+bare_channel__on_drain (uv_async_t *handle) {
   int err;
 
   bare_channel_port_t *port = handle->data;
@@ -94,7 +94,7 @@ on_drain (uv_async_t *handle) {
 }
 
 static void
-on_flush (uv_async_t *handle) {
+bare_channel__on_flush (uv_async_t *handle) {
   int err;
 
   bare_channel_port_t *port = handle->data;
@@ -120,7 +120,7 @@ on_flush (uv_async_t *handle) {
 }
 
 static void
-on_close (uv_handle_t *handle) {
+bare_channel__on_close (uv_handle_t *handle) {
   int err;
 
   bare_channel_port_t *port = handle->data;
@@ -138,7 +138,7 @@ on_close (uv_handle_t *handle) {
   assert(err == 0);
 
   js_value_t *on_destroy;
-  err = js_get_reference_value(env, port->on_destroy, &on_destroy);
+  err = js_get_reference_value(env, port->on_close, &on_destroy);
   assert(err == 0);
 
   err = js_delete_reference(env, port->on_drain);
@@ -150,7 +150,7 @@ on_close (uv_handle_t *handle) {
   err = js_delete_reference(env, port->on_end);
   assert(err == 0);
 
-  err = js_delete_reference(env, port->on_destroy);
+  err = js_delete_reference(env, port->on_close);
   assert(err == 0);
 
   err = js_delete_reference(env, port->ctx);
@@ -234,15 +234,15 @@ bare_channel_port_init (js_env_t *env, js_callback_info_t *info) {
   err = js_create_reference(env, argv[4], 1, &port->on_end);
   assert(err == 0);
 
-  err = js_create_reference(env, argv[5], 1, &port->on_destroy);
+  err = js_create_reference(env, argv[5], 1, &port->on_close);
   assert(err == 0);
 
-  err = uv_async_init(loop, &port->signals.drain, on_drain);
+  err = uv_async_init(loop, &port->signals.drain, bare_channel__on_drain);
   assert(err == 0);
 
   port->signals.drain.data = (void *) port;
 
-  err = uv_async_init(loop, &port->signals.flush, on_flush);
+  err = uv_async_init(loop, &port->signals.flush, bare_channel__on_flush);
   assert(err == 0);
 
   port->signals.flush.data = (void *) port;
@@ -284,9 +284,9 @@ bare_channel_port_destroy (js_env_t *env, js_callback_info_t *info) {
 
   port->closing = 2;
 
-  uv_close((uv_handle_t *) &port->signals.drain, on_close);
+  uv_close((uv_handle_t *) &port->signals.drain, bare_channel__on_close);
 
-  uv_close((uv_handle_t *) &port->signals.flush, on_close);
+  uv_close((uv_handle_t *) &port->signals.flush, bare_channel__on_close);
 
   return NULL;
 }
@@ -555,13 +555,18 @@ bare_channel_port_unref (js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
-init (js_env_t *env, js_value_t *exports) {
+bare_channel_exports (js_env_t *env, js_value_t *exports) {
+  int err;
+
 #define V(name, fn) \
   { \
     js_value_t *val; \
-    js_create_function(env, name, -1, fn, NULL, &val); \
-    js_set_named_property(env, exports, name, val); \
+    err = js_create_function(env, name, -1, fn, NULL, &val); \
+    assert(err == 0); \
+    err = js_set_named_property(env, exports, name, val); \
+    assert(err == 0); \
   }
+
   V("channelInit", bare_channel_init)
 
   V("portInit", bare_channel_port_init)
@@ -577,4 +582,4 @@ init (js_env_t *env, js_value_t *exports) {
   return exports;
 }
 
-BARE_MODULE(bare_channel, init)
+BARE_MODULE(bare_channel, bare_channel_exports)

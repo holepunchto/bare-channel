@@ -44,14 +44,14 @@ class Port extends EventEmitter {
 
     this._onwait = null
     this._ondrained = null
-    this._ondestroyed = null
+    this._onclosed = null
     this._onremoteclose = null
 
     this._id = binding.portInit(channel.handle, this,
       this._ondrain,
       this._onflush,
       this._onend,
-      this._ondestroy
+      this._onclose
     )
 
     this.closed = false
@@ -140,10 +140,10 @@ class Port extends EventEmitter {
     if (!this.remoteClosed) await new Promise((resolve) => { this._onremoteclose = resolve })
     this._onremoteclose = null
 
-    const destroyed = new Promise((resolve) => { this._ondestroyed = resolve })
+    const destroyed = new Promise((resolve) => { this._onclosed = resolve })
     binding.portDestroy(this._channel.handle, this._id)
     await destroyed
-    this._ondestroyed = null
+    this._onclosed = null
 
     Port._ports.delete(this)
 
@@ -212,8 +212,8 @@ class Port extends EventEmitter {
     else this.close()
   }
 
-  _ondestroy () {
-    this._ondestroyed()
+  _onclose () {
+    this._onclosed()
   }
 
   static _ports = new Set()
