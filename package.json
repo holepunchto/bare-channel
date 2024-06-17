@@ -3,7 +3,8 @@
   "version": "4.1.0",
   "description": "Inter-thread messaging for JavaScript",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./package": "./package.json"
   },
   "files": [
     "index.js",
