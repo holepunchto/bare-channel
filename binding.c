@@ -382,7 +382,7 @@ bare_channel_port_read (js_env_t *env, js_callback_info_t *info) {
       break;
     }
 
-    port->cursors.read = (port->cursors.read + 1) % BARE_CHANNEL_PORT_CAPACITY;
+    port->cursors.read = (port->cursors.read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
     if (sender->state & bare_channel_port_state_inited) {
       uv_async_send(&sender->signals.drain);
@@ -417,7 +417,7 @@ bare_channel_port_write (js_env_t *env, js_callback_info_t *info) {
 
   bool success = true;
 
-  int next = (receiver->cursors.write + 1) % BARE_CHANNEL_PORT_CAPACITY;
+  int next = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
   if (next == receiver->cursors.read) success = false;
   else {
@@ -474,7 +474,7 @@ bare_channel_port_end (js_env_t *env, js_callback_info_t *info) {
 
   bool success = true;
 
-  int next = (receiver->cursors.write + 1) % BARE_CHANNEL_PORT_CAPACITY;
+  int next = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
   if (next == receiver->cursors.read) success = false;
   else {
