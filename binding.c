@@ -18,7 +18,7 @@ enum {
   bare_channel_port_state_waiting = 0x2,
   bare_channel_port_state_ended = 0x4,
   bare_channel_port_state_destroying = 0x8,
-  bare_channel_port_state_destroyed = 0x16
+  bare_channel_port_state_destroyed = 0x10
 } bare_channel_port_state_t;
 
 struct bare_channel_message_s {
