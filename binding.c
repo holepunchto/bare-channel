@@ -431,7 +431,7 @@ bare_channel_port_write (js_env_t *env, js_callback_info_t *info) {
     err = js_detach_arraybuffer(env, argv[2]);
     assert(err == 0);
 
-    receiver->cursors.write = next;
+    receiver->cursors.write = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
     if (receiver->state & bare_channel_port_state_inited) {
       if (receiver->state & bare_channel_port_state_waiting) {
@@ -482,7 +482,7 @@ bare_channel_port_end (js_env_t *env, js_callback_info_t *info) {
 
     message->type = bare_channel_message_end;
 
-    receiver->cursors.write = next;
+    receiver->cursors.write = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
     if (receiver->state & bare_channel_port_state_inited) {
       uv_async_send(&receiver->signals.flush);
