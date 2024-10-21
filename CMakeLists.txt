@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(bare_channel C)
+find_package(cmake-bare REQUIRED PATHS node_modules/cmake-bare)
 
-include(bare)
+project(bare_channel C)
 
 add_bare_module(bare_channel)
 
@@ -11,11 +11,3 @@ target_sources(
   PRIVATE
     binding.c
 )
-
-if(MSVC)
-  target_compile_options(
-    ${bare_channel}
-    PRIVATE
-      /experimental:c11atomics
-  )
-endif()
