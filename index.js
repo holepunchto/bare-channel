@@ -59,8 +59,6 @@ class Port extends EventEmitter {
 
     this.closed = false
     this.remoteClosed = false
-
-    Port._ports.add(this)
   }
 
   get buffered() {
@@ -158,8 +156,6 @@ class Port extends EventEmitter {
     await destroyed
     this._onclosed = null
 
-    Port._ports.delete(this)
-
     this.closed = true
     this.emit('close')
   }
@@ -169,7 +165,6 @@ class Port extends EventEmitter {
   }
 
   unref() {
-    if (Bare.exiting) return // Unref'ed ports during exit is unsafe
     binding.portUnref(this._channel.handle, this._id)
   }
 
@@ -236,10 +231,4 @@ class Port extends EventEmitter {
   _onclose() {
     this._onclosed()
   }
-
-  static _ports = new Set()
 }
-
-Bare.on('exit', async () => {
-  for (const port of Port._ports) port.ref()
-})
