@@ -7,27 +7,24 @@ const binding = require('./binding')
 const MAX_BUFFER = 128
 
 module.exports = exports = class Channel {
-  constructor (opts = {}) {
-    const {
-      handle = binding.channelInit(),
-      interfaces = []
-    } = opts
+  constructor(opts = {}) {
+    const { handle = binding.channelInit(), interfaces = [] } = opts
 
     this.handle = handle
     this.interfaces = interfaces
   }
 
-  connect () {
+  connect() {
     return new Port(this)
   }
 
-  static from (handle, opts = {}) {
+  static from(handle, opts = {}) {
     return new Channel({ ...opts, handle })
   }
 }
 
 class Port extends EventEmitter {
-  constructor (channel) {
+  constructor(channel) {
     super()
 
     this._channel = channel
@@ -37,17 +34,23 @@ class Port extends EventEmitter {
     this._backpressured = false
 
     this._drainedPromise = null
-    this._drainedQueue = (resolve) => { this._ondrained = resolve }
+    this._drainedQueue = (resolve) => {
+      this._ondrained = resolve
+    }
 
     this._waitPromise = null
-    this._waitQueue = (resolve) => { this._onwait = resolve }
+    this._waitQueue = (resolve) => {
+      this._onwait = resolve
+    }
 
     this._onwait = null
     this._ondrained = null
     this._onclosed = null
     this._onremoteclose = null
 
-    this._id = binding.portInit(channel.handle, this,
+    this._id = binding.portInit(
+      channel.handle,
+      this,
       this._ondrain,
       this._onflush,
       this._onend,
@@ -60,19 +63,19 @@ class Port extends EventEmitter {
     Port._ports.add(this)
   }
 
-  get buffered () {
+  get buffered() {
     return this._buffer.length
   }
 
-  get drained () {
+  get drained() {
     return this._drainedPromise !== null
   }
 
-  get closing () {
+  get closing() {
     return this._closing !== null
   }
 
-  async read () {
+  async read() {
     do {
       if (this._buffer.length) return this._buffer.shift()
     } while (await this._wait())
@@ -80,7 +83,7 @@ class Port extends EventEmitter {
     return null
   }
 
-  readSync () {
+  readSync() {
     while (true) {
       if (this._closing !== null) return null
 
@@ -94,14 +97,18 @@ class Port extends EventEmitter {
     }
   }
 
-  async write (value, opts = {}) {
-    const serialized = structuredClone.serializeWithTransfer(value, opts.transfer, this._channel.interfaces)
+  async write(value, opts = {}) {
+    const serialized = structuredClone.serializeWithTransfer(
+      value,
+      opts.transfer,
+      this._channel.interfaces
+    )
 
     const state = { start: 0, end: 0, buffer: null }
 
     structuredClone.preencode(state, serialized)
 
-    const data = state.buffer = Buffer.allocUnsafe(state.end)
+    const data = (state.buffer = Buffer.allocUnsafe(state.end))
 
     structuredClone.encode(state, serialized)
 
@@ -111,11 +118,12 @@ class Port extends EventEmitter {
       if (this._closing !== null) return false
       if (binding.portWrite(this._channel.handle, this._id, data.buffer)) break
 
-      if (this._drainedPromise === null) this._drainedPromise = new Promise(this._drainedQueue)
+      if (this._drainedPromise === null)
+        this._drainedPromise = new Promise(this._drainedQueue)
     }
   }
 
-  async * [Symbol.asyncIterator] () {
+  async *[Symbol.asyncIterator]() {
     do {
       while (this._closing === null && this._buffer.length > 0) {
         yield this._buffer.shift()
@@ -123,12 +131,12 @@ class Port extends EventEmitter {
     } while (await this._wait())
   }
 
-  close () {
+  close() {
     if (this._closing === null) this._closing = this._close()
     return this._closing
   }
 
-  async _close () {
+  async _close() {
     await Promise.resolve() // Avoid re-entry
 
     this.emit('closing')
@@ -137,10 +145,15 @@ class Port extends EventEmitter {
 
     binding.portEnd(this._channel.handle, this._id)
 
-    if (!this.remoteClosed) await new Promise((resolve) => { this._onremoteclose = resolve })
+    if (!this.remoteClosed)
+      await new Promise((resolve) => {
+        this._onremoteclose = resolve
+      })
     this._onremoteclose = null
 
-    const destroyed = new Promise((resolve) => { this._onclosed = resolve })
+    const destroyed = new Promise((resolve) => {
+      this._onclosed = resolve
+    })
     binding.portDestroy(this._channel.handle, this._id)
     await destroyed
     this._onclosed = null
@@ -151,23 +164,24 @@ class Port extends EventEmitter {
     this.emit('close')
   }
 
-  ref () {
+  ref() {
     binding.portRef(this._channel.handle, this._id)
   }
 
-  unref () {
+  unref() {
     if (Bare.exiting) return // Unref'ed ports during exit is unsafe
     binding.portUnref(this._channel.handle, this._id)
   }
 
-  _wait () {
+  _wait() {
     if (this._backpressured) this._onflush()
-    if (this._buffer.length > 0 || this._closing !== null) return Promise.resolve(this._closing === null)
+    if (this._buffer.length > 0 || this._closing !== null)
+      return Promise.resolve(this._closing === null)
     if (!this._waitPromise) this._waitPromise = new Promise(this._waitQueue)
     return this._waitPromise
   }
 
-  _ondrain () {
+  _ondrain() {
     if (this._ondrained === null) return
 
     const ondrained = this._ondrained
@@ -177,16 +191,23 @@ class Port extends EventEmitter {
     ondrained(this._closing === null)
   }
 
-  _onflush () {
+  _onflush() {
     this._backpressured = false
 
     while (this._buffer.length < MAX_BUFFER) {
       const data = binding.portRead(this._channel.handle, this._id)
       if (data === null) return
 
-      const state = { start: 0, end: data.byteLength, buffer: Buffer.from(data) }
+      const state = {
+        start: 0,
+        end: data.byteLength,
+        buffer: Buffer.from(data)
+      }
 
-      const value = structuredClone.deserializeWithTransfer(structuredClone.decode(state), this._channel.interfaces)
+      const value = structuredClone.deserializeWithTransfer(
+        structuredClone.decode(state),
+        this._channel.interfaces
+      )
 
       this._buffer.push(value)
       this._onactive()
@@ -195,7 +216,7 @@ class Port extends EventEmitter {
     this._backpressured = true
   }
 
-  _onactive () {
+  _onactive() {
     if (this._onwait === null) return
 
     const onwait = this._onwait
@@ -205,14 +226,14 @@ class Port extends EventEmitter {
     onwait(this._closing === null)
   }
 
-  _onend () {
+  _onend() {
     this.remoteClosed = true
 
     if (this._onremoteclose !== null) this._onremoteclose()
     else this.close()
   }
 
-  _onclose () {
+  _onclose() {
     this._onclosed()
   }
 

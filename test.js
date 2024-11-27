@@ -8,16 +8,20 @@ test('basic', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
 
-    const channel = Channel.from(handle)
-    const port = channel.connect()
+      const channel = Channel.from(handle)
+      const port = channel.connect()
 
-    for await (const data of port) {
-      port.write(data)
+      for await (const data of port) {
+        port.write(data)
+      }
     }
-  })
+  )
 
   const port = channel.connect()
   const expected = ['ping', 'pong']
@@ -41,16 +45,20 @@ test('read async', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
 
-    const channel = Channel.from(handle)
-    const port = channel.connect()
+      const channel = Channel.from(handle)
+      const port = channel.connect()
 
-    for await (const data of port) {
-      port.write(data)
+      for await (const data of port) {
+        port.write(data)
+      }
     }
-  })
+  )
 
   const port = channel.connect()
   const expected = ['ping', 'pong']
@@ -74,16 +82,20 @@ test('read blocking', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
 
-    const channel = Channel.from(handle)
-    const port = channel.connect()
+      const channel = Channel.from(handle)
+      const port = channel.connect()
 
-    for await (const data of port) {
-      port.write(data)
+      for await (const data of port) {
+        port.write(data)
+      }
     }
-  })
+  )
 
   const port = channel.connect()
   const expected = ['ping', 'pong']
@@ -107,16 +119,20 @@ test('big echo', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
 
-    const channel = Channel.from(handle)
-    const port = channel.connect()
+      const channel = Channel.from(handle)
+      const port = channel.connect()
 
-    for await (const data of port) {
-      await port.write(data)
+      for await (const data of port) {
+        await port.write(data)
+      }
     }
-  })
+  )
 
   const port = channel.connect()
   const sent = ['ping']
@@ -147,43 +163,47 @@ test('big echo', async (t) => {
 
 test('serializable interface', async (t) => {
   class Foo {
-    constructor (foo) {
+    constructor(foo) {
       this.foo = foo
     }
 
-    [Symbol.for('bare.serialize')] () {
+    [Symbol.for('bare.serialize')]() {
       return this.foo
     }
 
-    static [Symbol.for('bare.deserialize')] (serialized) {
+    static [Symbol.for('bare.deserialize')](serialized) {
       return new Foo(serialized)
     }
   }
 
   const channel = new Channel({ interfaces: [Foo] })
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
 
-    class Foo {
-      constructor (foo) {
-        this.foo = foo
+      class Foo {
+        constructor(foo) {
+          this.foo = foo
+        }
+
+        [Symbol.for('bare.serialize')]() {
+          return this.foo
+        }
+
+        static [Symbol.for('bare.deserialize')](serialized) {
+          return new Foo(serialized)
+        }
       }
 
-      [Symbol.for('bare.serialize')] () {
-        return this.foo
-      }
+      const channel = Channel.from(handle, { interfaces: [Foo] })
+      const port = channel.connect()
 
-      static [Symbol.for('bare.deserialize')] (serialized) {
-        return new Foo(serialized)
-      }
+      await port.write(await port.read())
     }
-
-    const channel = Channel.from(handle, { interfaces: [Foo] })
-    const port = channel.connect()
-
-    await port.write(await port.read())
-  })
+  )
 
   const port = channel.connect()
 
