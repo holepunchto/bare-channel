@@ -18,7 +18,8 @@ enum {
   bare_channel_port_state_waiting = 0x2,
   bare_channel_port_state_ended = 0x4,
   bare_channel_port_state_destroying = 0x8,
-  bare_channel_port_state_destroyed = 0x10
+  bare_channel_port_state_destroyed = 0x10,
+  bare_channel_port_state_exiting = 0x20
 } bare_channel_port_state_t;
 
 struct bare_channel_message_s {
@@ -34,6 +35,8 @@ struct bare_channel_message_s {
 
 struct bare_channel_port_s {
   bare_channel_t *channel;
+
+  uint8_t id;
 
   uv_sem_t wait;
 
@@ -61,7 +64,6 @@ struct bare_channel_port_s {
   js_ref_t *on_close;
 
   js_deferred_teardown_t *teardown;
-  bool exiting;
 };
 
 struct bare_channel_s {
@@ -86,11 +88,11 @@ bare_channel__on_drain(uv_async_t *handle) {
   err = js_get_reference_value(env, port->ctx, &ctx);
   assert(err == 0);
 
-  js_value_t *on_read;
-  err = js_get_reference_value(env, port->on_drain, &on_read);
+  js_value_t *on_drain;
+  err = js_get_reference_value(env, port->on_drain, &on_drain);
   assert(err == 0);
 
-  js_call_function(env, ctx, on_read, 0, NULL, NULL);
+  js_call_function(env, ctx, on_drain, 0, NULL, NULL);
 
   err = js_close_handle_scope(env, scope);
   assert(err == 0);
@@ -112,11 +114,11 @@ bare_channel__on_flush(uv_async_t *handle) {
   err = js_get_reference_value(env, port->ctx, &ctx);
   assert(err == 0);
 
-  js_value_t *on_write;
-  err = js_get_reference_value(env, port->on_flush, &on_write);
+  js_value_t *on_flush;
+  err = js_get_reference_value(env, port->on_flush, &on_flush);
   assert(err == 0);
 
-  js_call_function(env, ctx, on_write, 0, NULL, NULL);
+  js_call_function(env, ctx, on_flush, 0, NULL, NULL);
 
   err = js_close_handle_scope(env, scope);
   assert(err == 0);
@@ -130,11 +132,11 @@ bare_channel__on_close(uv_handle_t *handle) {
 
   if (--port->closing != 0) return;
 
-  port->state = bare_channel_port_state_destroyed;
+  port->state |= bare_channel_port_state_destroyed;
 
   js_env_t *env = port->env;
 
-  if (port->exiting) goto finalize;
+  if (port->state & bare_channel_port_state_exiting) goto finalize;
 
   js_handle_scope_t *scope;
   err = js_open_handle_scope(env, &scope);
@@ -179,9 +181,18 @@ static void
 bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
   bare_channel_port_t *port = data;
 
-  port->state |= bare_channel_port_state_destroying;
+  port->state |= bare_channel_port_state_exiting;
   port->closing = 2;
-  port->exiting = true;
+
+  bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
+
+  if (receiver->state & bare_channel_port_state_inited) {
+    if (receiver->state & bare_channel_port_state_waiting) {
+      uv_sem_post(&receiver->wait);
+    } else {
+      uv_async_send(&receiver->signals.flush);
+    }
+  }
 
   uv_close((uv_handle_t *) &port->signals.drain, bare_channel__on_close);
   uv_close((uv_handle_t *) &port->signals.flush, bare_channel__on_close);
@@ -199,9 +210,10 @@ bare_channel_init(js_env_t *env, js_callback_info_t *info) {
 
   channel->next_port = 0;
 
-  for (uint8_t i = 0; i < 2; i++) {
-    bare_channel_port_t *port = &channel->ports[i];
+  for (uint8_t id = 0; id < 2; id++) {
+    bare_channel_port_t *port = &channel->ports[id];
 
+    port->id = id;
     port->channel = channel;
     port->state = 0;
     port->cursors.read = 0;
@@ -242,7 +254,6 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   uv_sem_init(&port->wait, 1);
 
   port->env = env;
-  port->exiting = false;
 
   err = js_create_reference(env, argv[1], 1, &port->ctx);
   assert(err == 0);
@@ -372,7 +383,20 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
 
   js_value_t *result;
 
-  if (port->cursors.read == port->cursors.write) {
+  if (sender->state & bare_channel_port_state_exiting) {
+    js_value_t *ctx;
+    err = js_get_reference_value(env, port->ctx, &ctx);
+    assert(err == 0);
+
+    js_value_t *on_end;
+    err = js_get_reference_value(env, port->on_end, &on_end);
+    assert(err == 0);
+
+    js_call_function(env, ctx, on_end, 0, NULL, NULL);
+
+    err = js_get_null(env, &result);
+    assert(err == 0);
+  } else if (port->cursors.read == port->cursors.write) {
     err = js_get_null(env, &result);
     assert(err == 0);
   } else {

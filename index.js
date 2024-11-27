@@ -143,17 +143,22 @@ class Port extends EventEmitter {
 
     binding.portEnd(this._channel.handle, this._id)
 
-    if (!this.remoteClosed)
+    if (!this.remoteClosed) {
       await new Promise((resolve) => {
         this._onremoteclose = resolve
       })
+    }
+
     this._onremoteclose = null
 
     const destroyed = new Promise((resolve) => {
       this._onclosed = resolve
     })
+
     binding.portDestroy(this._channel.handle, this._id)
+
     await destroyed
+
     this._onclosed = null
 
     this.closed = true
