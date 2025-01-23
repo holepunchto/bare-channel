@@ -1,5 +1,6 @@
 /* global Bare */
 const test = require('brittle')
+const { symbols } = require('bare-structured-clone')
 const Channel = require('.')
 const { Thread } = Bare
 
@@ -167,11 +168,11 @@ test('serializable interface', async (t) => {
       this.foo = foo
     }
 
-    [Symbol.for('bare.serialize')]() {
+    [symbols.serialize]() {
       return this.foo
     }
 
-    static [Symbol.for('bare.deserialize')](serialized) {
+    static [symbols.deserialize](serialized) {
       return new Foo(serialized)
     }
   }
@@ -183,17 +184,18 @@ test('serializable interface', async (t) => {
     { data: channel.handle },
     async (handle) => {
       const Channel = require('.')
+      const { symbols } = require('bare-structured-clone')
 
       class Foo {
         constructor(foo) {
           this.foo = foo
         }
 
-        [Symbol.for('bare.serialize')]() {
+        [symbols.serialize]() {
           return this.foo
         }
 
-        static [Symbol.for('bare.deserialize')](serialized) {
+        static [symbols.deserialize](serialized) {
           return new Foo(serialized)
         }
       }
