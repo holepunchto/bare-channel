@@ -10,13 +10,15 @@ interface ChannelOptions {
   interfaces?: (SerializableConstructor | TransferableConstructor)[]
 }
 
-declare class Channel<T extends unknown = unknown> {
-  constructor(opts?: ChannelOptions)
-
+interface Channel<T = unknown> {
   readonly handle: SharedArrayBuffer
   readonly interfaces: (SerializableConstructor | TransferableConstructor)[]
 
   connect(): Port<T>
+}
+
+declare class Channel {
+  constructor(opts?: ChannelOptions)
 
   static from(handle: SharedArrayBuffer, opts?: ChannelOptions): Channel
 }
@@ -26,12 +28,9 @@ interface PortEvents extends EventMap {
   close: []
 }
 
-declare class Port<T extends unknown> extends EventEmitter<PortEvents> {
-  constructor(channel: Channel)
-
+interface Port<T = unknown> extends EventEmitter<PortEvents>, AsyncIterable<T> {
   readonly closed: boolean
   readonly remoteClosed: boolean
-
   readonly buffered: number
   readonly drained: boolean
   readonly closing: boolean
@@ -44,9 +43,11 @@ declare class Port<T extends unknown> extends EventEmitter<PortEvents> {
 
   write(value: T, opts?: { transfer: TransferableValue[] }): Promise<void>
 
-  close(): Promise<void> | boolean
+  close(): Promise<void>
+}
 
-  [Symbol.asyncIterator](): AsyncIterator<T>
+declare class Port<T = unknown> extends EventEmitter<PortEvents> {
+  constructor(channel: Channel<T>)
 }
 
 export = Channel
