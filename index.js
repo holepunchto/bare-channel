@@ -1,4 +1,3 @@
-/* global Bare */
 const EventEmitter = require('bare-events')
 const structuredClone = require('bare-structured-clone')
 const FIFO = require('fast-fifo')
@@ -75,7 +74,7 @@ class Port extends EventEmitter {
 
   async read() {
     do {
-      if (this._buffer.length) return this._buffer.shift()
+      if (this._buffer.length > 0) return this._buffer.shift()
     } while (await this._wait())
 
     return null
@@ -85,17 +84,17 @@ class Port extends EventEmitter {
     while (true) {
       if (this._closing !== null) return null
 
-      if (this._buffer.length === 0) {
-        binding.portWait(this._channel.handle, this._id)
-        this._onflush()
-        continue
-      }
+      if (this._buffer.length > 0) return this._buffer.shift()
 
-      return this._buffer.shift()
+      binding.portWait(this._channel.handle, this._id)
+
+      this._onflush()
     }
   }
 
   async write(value, opts = {}) {
+    if (value === null) return
+
     const serialized = structuredClone.serializeWithTransfer(
       value,
       opts.transfer,
@@ -114,10 +113,12 @@ class Port extends EventEmitter {
       while (this._drainedPromise !== null) await this._drainedPromise
 
       if (this._closing !== null) return false
+
       if (binding.portWrite(this._channel.handle, this._id, data.buffer)) break
 
-      if (this._drainedPromise === null)
+      if (this._drainedPromise === null) {
         this._drainedPromise = new Promise(this._drainedQueue)
+      }
     }
   }
 
@@ -175,9 +176,15 @@ class Port extends EventEmitter {
 
   _wait() {
     if (this._backpressured) this._onflush()
-    if (this._buffer.length > 0 || this._closing !== null)
+
+    if (this._closing !== null || this._buffer.length > 0) {
       return Promise.resolve(this._closing === null)
-    if (!this._waitPromise) this._waitPromise = new Promise(this._waitQueue)
+    }
+
+    if (this._waitPromise === null) {
+      this._waitPromise = new Promise(this._waitQueue)
+    }
+
     return this._waitPromise
   }
 
@@ -196,6 +203,7 @@ class Port extends EventEmitter {
 
     while (this._buffer.length < MAX_BUFFER) {
       const data = binding.portRead(this._channel.handle, this._id)
+
       if (data === null) return
 
       const state = {
