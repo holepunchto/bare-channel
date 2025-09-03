@@ -1,4 +1,3 @@
-/* global Bare */
 const test = require('brittle')
 const { symbols } = require('bare-structured-clone')
 const Channel = require('.')

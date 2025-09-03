@@ -78,6 +78,8 @@ bare_channel__on_drain(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
+  if (port->state & bare_channel_port_state_exiting) return;
+
   js_env_t *env = port->env;
 
   js_handle_scope_t *scope;
@@ -103,6 +105,8 @@ bare_channel__on_flush(uv_async_t *handle) {
   int err;
 
   bare_channel_port_t *port = handle->data;
+
+  if (port->state & bare_channel_port_state_exiting) return;
 
   js_env_t *env = port->env;
 
@@ -132,11 +136,11 @@ bare_channel__on_close(uv_handle_t *handle) {
 
   if (--port->closing != 0) return;
 
+  js_deferred_teardown_t *teardown = port->teardown;
+
   port->state |= bare_channel_port_state_destroyed;
 
   js_env_t *env = port->env;
-
-  if (port->state & bare_channel_port_state_exiting) goto finalize;
 
   js_handle_scope_t *scope;
   err = js_open_handle_scope(env, &scope);
@@ -148,15 +152,6 @@ bare_channel__on_close(uv_handle_t *handle) {
 
   js_value_t *on_destroy;
   err = js_get_reference_value(env, port->on_close, &on_destroy);
-  assert(err == 0);
-
-  js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
-
-  err = js_close_handle_scope(env, scope);
-  assert(err == 0);
-
-finalize:
-  err = js_finish_deferred_teardown_callback(port->teardown);
   assert(err == 0);
 
   err = js_delete_reference(env, port->on_drain);
@@ -175,6 +170,16 @@ finalize:
   assert(err == 0);
 
   uv_sem_destroy(&port->wait);
+
+  if ((port->state & bare_channel_port_state_exiting) == 0) {
+    js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
+  }
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
+
+  err = js_finish_deferred_teardown_callback(teardown);
+  assert(err == 0);
 }
 
 static void
@@ -182,20 +187,23 @@ bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
   bare_channel_port_t *port = data;
 
   port->state |= bare_channel_port_state_exiting;
+
+  if (port->state & bare_channel_port_state_destroying) return;
+
+  port->state |= bare_channel_port_state_destroying;
   port->closing = 2;
 
   bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
 
-  if (receiver->state & bare_channel_port_state_inited) {
-    if (receiver->state & bare_channel_port_state_waiting) {
-      uv_sem_post(&receiver->wait);
-    } else {
-      uv_async_send(&receiver->signals.flush);
-    }
+  if (receiver->state & bare_channel_port_state_waiting) {
+    uv_sem_post(&receiver->wait);
   }
 
-  uv_close((uv_handle_t *) &port->signals.drain, bare_channel__on_close);
-  uv_close((uv_handle_t *) &port->signals.flush, bare_channel__on_close);
+#define V(signal) \
+  uv_close((uv_handle_t *) &port->signals.signal, bare_channel__on_close);
+  V(drain)
+  V(flush)
+#undef V
 }
 
 static js_value_t *
@@ -240,18 +248,19 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   if (channel->next_port >= 2) {
-    js_throw_error(env, NULL, "channel already fully connected");
+    err = js_throw_error(env, NULL, "channel already fully connected");
+    assert(err == 0);
+
     return NULL;
   }
 
   uv_loop_t *loop;
-  js_get_env_loop(env, &loop);
+  err = js_get_env_loop(env, &loop);
+  assert(err == 0);
 
   int id = channel->next_port++;
 
   bare_channel_port_t *port = &channel->ports[id];
-
-  uv_sem_init(&port->wait, 1);
 
   port->env = env;
 
@@ -273,19 +282,20 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   err = js_add_deferred_teardown_callback(env, bare_channel__on_teardown, (void *) port, &port->teardown);
   assert(err == 0);
 
-  err = uv_async_init(loop, &port->signals.drain, bare_channel__on_drain);
+  err = uv_sem_init(&port->wait, 1);
   assert(err == 0);
 
-  port->signals.drain.data = (void *) port;
-
-  err = uv_async_init(loop, &port->signals.flush, bare_channel__on_flush);
-  assert(err == 0);
-
-  port->signals.flush.data = (void *) port;
-
-  port->state |= bare_channel_port_state_inited;
+#define V(signal) \
+  err = uv_async_init(loop, &port->signals.signal, bare_channel__on_##signal); \
+  assert(err == 0); \
+  port->signals.signal.data = (void *) port;
+  V(drain)
+  V(flush)
+#undef V
 
   uv_async_send(&port->signals.flush);
+
+  port->state |= bare_channel_port_state_inited;
 
   js_value_t *result;
   err = js_create_int32(env, id, &result);
@@ -319,8 +329,11 @@ bare_channel_port_destroy(js_env_t *env, js_callback_info_t *info) {
   port->state |= bare_channel_port_state_destroying;
   port->closing = 2;
 
-  uv_close((uv_handle_t *) &port->signals.drain, bare_channel__on_close);
-  uv_close((uv_handle_t *) &port->signals.flush, bare_channel__on_close);
+#define V(signal) \
+  uv_close((uv_handle_t *) &port->signals.signal, bare_channel__on_close);
+  V(drain)
+  V(flush)
+#undef V
 
   return NULL;
 }
@@ -532,7 +545,11 @@ bare_channel_port_end(js_env_t *env, js_callback_info_t *info) {
     receiver->cursors.write = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
     if (receiver->state & bare_channel_port_state_inited) {
-      uv_async_send(&receiver->signals.flush);
+      if (receiver->state & bare_channel_port_state_waiting) {
+        uv_sem_post(&receiver->wait);
+      } else {
+        uv_async_send(&receiver->signals.flush);
+      }
     }
   }
 
@@ -565,8 +582,11 @@ bare_channel_port_ref(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  uv_ref((uv_handle_t *) &port->signals.drain);
-  uv_ref((uv_handle_t *) &port->signals.flush);
+#define V(signal) \
+  uv_ref((uv_handle_t *) &port->signals.signal);
+  V(drain)
+  V(flush)
+#undef V
 
   return NULL;
 }
@@ -593,8 +613,11 @@ bare_channel_port_unref(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  uv_unref((uv_handle_t *) &port->signals.drain);
-  uv_unref((uv_handle_t *) &port->signals.flush);
+#define V(signal) \
+  uv_unref((uv_handle_t *) &port->signals.signal);
+  V(drain)
+  V(flush)
+#undef V
 
   return NULL;
 }
