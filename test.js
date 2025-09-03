@@ -18,7 +18,7 @@ test('basic', async (t) => {
       const port = channel.connect()
 
       for await (const data of port) {
-        port.write(data)
+        await port.write(data)
       }
     }
   )
@@ -27,7 +27,7 @@ test('basic', async (t) => {
   const expected = ['ping', 'pong']
 
   for (const data of expected) {
-    port.write(data)
+    await port.write(data)
   }
 
   for await (const data of port) {
@@ -55,7 +55,7 @@ test('read async', async (t) => {
       const port = channel.connect()
 
       for await (const data of port) {
-        port.write(data)
+        await port.write(data)
       }
     }
   )
@@ -64,7 +64,7 @@ test('read async', async (t) => {
   const expected = ['ping', 'pong']
 
   for (const data of expected) {
-    port.write(data)
+    await port.write(data)
   }
 
   while (true) {
@@ -92,7 +92,7 @@ test('read blocking', async (t) => {
       const port = channel.connect()
 
       for await (const data of port) {
-        port.write(data)
+        await port.write(data)
       }
     }
   )
@@ -101,7 +101,7 @@ test('read blocking', async (t) => {
   const expected = ['ping', 'pong']
 
   for (const data of expected) {
-    port.write(data)
+    await port.write(data)
   }
 
   while (true) {
