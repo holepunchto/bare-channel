@@ -238,7 +238,10 @@ test('detect close on teardown', async (t) => {
   )
 
   const port = channel.connect()
-  port.on('close', () => t.pass('port closed'))
 
-  thread.join()
+  port.on('close', () => {
+    t.pass('port closed')
+
+    thread.join()
+  })
 })
