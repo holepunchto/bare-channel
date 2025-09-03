@@ -409,44 +409,53 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
 
     err = js_get_null(env, &result);
     assert(err == 0);
-  } else if (port->cursors.read == port->cursors.write) {
+
+    return result;
+  }
+
+  if (port->cursors.read == port->cursors.write) {
     err = js_get_null(env, &result);
     assert(err == 0);
-  } else {
-    bare_channel_message_t *message = &port->messages[port->cursors.read];
 
-    switch (message->type) {
-    case bare_channel_message_end: {
-      js_value_t *ctx;
-      err = js_get_reference_value(env, port->ctx, &ctx);
-      assert(err == 0);
+    return result;
+  }
 
-      js_value_t *on_end;
-      err = js_get_reference_value(env, port->on_end, &on_end);
-      assert(err == 0);
+  bare_channel_message_t *message = &port->messages[port->cursors.read];
 
-      js_call_function(env, ctx, on_end, 0, NULL, NULL);
+  switch (message->type) {
+  case bare_channel_message_end: {
+    port->state |= bare_channel_port_state_ended;
 
-      err = js_get_null(env, &result);
-      assert(err == 0);
-      break;
-    }
+    js_value_t *ctx;
+    err = js_get_reference_value(env, port->ctx, &ctx);
+    assert(err == 0);
 
-    case bare_channel_message_data:
-    default:
-      err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
-      assert(err == 0);
+    js_value_t *on_end;
+    err = js_get_reference_value(env, port->on_end, &on_end);
+    assert(err == 0);
 
-      err = js_release_arraybuffer_backing_store(env, message->backing_store);
-      assert(err == 0);
-      break;
-    }
+    js_call_function(env, ctx, on_end, 0, NULL, NULL);
 
-    port->cursors.read = (port->cursors.read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
+    err = js_get_null(env, &result);
+    assert(err == 0);
 
-    if (sender->state & bare_channel_port_state_inited) {
-      uv_async_send(&sender->signals.drain);
-    }
+    return result;
+  }
+
+  case bare_channel_message_data:
+  default:
+    err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
+    assert(err == 0);
+
+    err = js_release_arraybuffer_backing_store(env, message->backing_store);
+    assert(err == 0);
+    break;
+  }
+
+  port->cursors.read = (port->cursors.read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
+
+  if (sender->state & bare_channel_port_state_inited) {
+    uv_async_send(&sender->signals.drain);
   }
 
   return result;

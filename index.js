@@ -124,9 +124,7 @@ class Port extends EventEmitter {
 
   async *[Symbol.asyncIterator]() {
     do {
-      while (this._closing === null && this._buffer.length > 0) {
-        yield this._buffer.shift()
-      }
+      while (this._buffer.length > 0) yield this._buffer.shift()
     } while (await this._wait())
   }
 
