@@ -15,11 +15,9 @@ typedef struct bare_channel_message_s bare_channel_message_t;
 
 enum {
   bare_channel_port_state_inited = 0x1,
-  bare_channel_port_state_waiting = 0x2,
-  bare_channel_port_state_ended = 0x4,
-  bare_channel_port_state_destroying = 0x8,
-  bare_channel_port_state_destroyed = 0x10,
-  bare_channel_port_state_exiting = 0x20
+  bare_channel_port_state_destroying = 0x2,
+  bare_channel_port_state_destroyed = 0x4,
+  bare_channel_port_state_exiting = 0x8
 } bare_channel_port_state_t;
 
 struct bare_channel_message_s {
@@ -38,7 +36,8 @@ struct bare_channel_port_s {
 
   uint8_t id;
 
-  uv_sem_t wait;
+  uv_mutex_t lock;
+  uv_cond_t available;
 
   atomic_int state;
 
@@ -89,26 +88,29 @@ bare_channel__close(bare_channel_port_t *port) {
 
 static inline bool
 bare_channel__end(bare_channel_port_t *port) {
+  int err;
+
   bare_channel_t *channel = port->channel;
 
   bare_channel_port_t *receiver = &channel->ports[(port->id + 1) & 1];
 
-  int next = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
+  int write = receiver->cursors.write;
+
+  int next = (write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
   if (next == receiver->cursors.read) return false;
 
-  bare_channel_message_t *message = &receiver->messages[receiver->cursors.write];
+  bare_channel_message_t *message = &receiver->messages[write];
 
   message->type = bare_channel_message_end;
 
-  receiver->cursors.write = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
+  receiver->cursors.write = next;
 
   if (receiver->state & bare_channel_port_state_inited) {
-    if (receiver->state & bare_channel_port_state_waiting) {
-      uv_sem_post(&receiver->wait);
-    } else {
-      uv_async_send(&receiver->signals.flush);
-    }
+    uv_cond_signal(&receiver->available);
+
+    err = uv_async_send(&receiver->signals.flush);
+    assert(err == 0);
   }
 
   return true;
@@ -213,7 +215,9 @@ bare_channel__on_close(uv_handle_t *handle) {
   err = js_delete_reference(env, port->ctx);
   assert(err == 0);
 
-  uv_sem_destroy(&port->wait);
+  uv_mutex_destroy(&port->lock);
+
+  uv_cond_destroy(&port->available);
 
   if ((port->state & bare_channel_port_state_exiting) == 0) {
     js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
@@ -319,7 +323,10 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   err = js_add_deferred_teardown_callback(env, bare_channel__on_teardown, (void *) port, &port->teardown);
   assert(err == 0);
 
-  err = uv_sem_init(&port->wait, 1);
+  err = uv_mutex_init(&port->lock);
+  assert(err == 0);
+
+  err = uv_cond_init(&port->available);
   assert(err == 0);
 
 #define V(signal) \
@@ -330,7 +337,8 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   V(flush)
 #undef V
 
-  uv_async_send(&port->signals.flush);
+  err = uv_async_send(&port->signals.flush);
+  assert(err == 0);
 
   port->state |= bare_channel_port_state_inited;
 
@@ -397,13 +405,13 @@ bare_channel_port_wait(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
+  uv_mutex_lock(&port->lock);
+
   while (port->cursors.read == port->cursors.write) {
-    port->state |= bare_channel_port_state_waiting;
-
-    uv_sem_wait(&port->wait);
-
-    port->state &= ~bare_channel_port_state_waiting;
+    uv_cond_wait(&port->available, &port->lock);
   }
+
+  uv_mutex_unlock(&port->lock);
 
   return NULL;
 }
@@ -428,71 +436,54 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int32(env, argv[1], &id);
   assert(err == 0);
 
-  bare_channel_port_t *port = &channel->ports[id];
-  bare_channel_port_t *sender = &channel->ports[(id + 1) & 1];
+  bare_channel_port_t *receiver = &channel->ports[id];
 
   js_value_t *result;
 
-  if (sender->state & bare_channel_port_state_exiting) {
-    js_value_t *ctx;
-    err = js_get_reference_value(env, port->ctx, &ctx);
-    assert(err == 0);
+  int read = receiver->cursors.read;
 
-    js_value_t *on_end;
-    err = js_get_reference_value(env, port->on_end, &on_end);
-    assert(err == 0);
+  int next = (read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
-    js_call_function(env, ctx, on_end, 0, NULL, NULL);
-
+  if (read == receiver->cursors.write) {
     err = js_get_null(env, &result);
     assert(err == 0);
+  } else {
+    bare_channel_message_t *message = &receiver->messages[read];
 
-    return result;
-  }
+    switch (message->type) {
+    case bare_channel_message_end: {
+      js_value_t *ctx;
+      err = js_get_reference_value(env, receiver->ctx, &ctx);
+      assert(err == 0);
 
-  if (port->cursors.read == port->cursors.write) {
-    err = js_get_null(env, &result);
-    assert(err == 0);
+      js_value_t *on_end;
+      err = js_get_reference_value(env, receiver->on_end, &on_end);
+      assert(err == 0);
 
-    return result;
-  }
+      js_call_function(env, ctx, on_end, 0, NULL, NULL);
 
-  bare_channel_message_t *message = &port->messages[port->cursors.read];
+      err = js_get_null(env, &result);
+      assert(err == 0);
+      break;
+    }
 
-  switch (message->type) {
-  case bare_channel_message_end: {
-    port->state |= bare_channel_port_state_ended;
+    case bare_channel_message_data:
+    default:
+      err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
+      assert(err == 0);
 
-    js_value_t *ctx;
-    err = js_get_reference_value(env, port->ctx, &ctx);
-    assert(err == 0);
+      err = js_release_arraybuffer_backing_store(env, message->backing_store);
+      assert(err == 0);
 
-    js_value_t *on_end;
-    err = js_get_reference_value(env, port->on_end, &on_end);
-    assert(err == 0);
+      receiver->cursors.read = next;
 
-    js_call_function(env, ctx, on_end, 0, NULL, NULL);
+      bare_channel_port_t *sender = &channel->ports[(id + 1) & 1];
 
-    err = js_get_null(env, &result);
-    assert(err == 0);
-
-    return result;
-  }
-
-  case bare_channel_message_data:
-  default:
-    err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
-    assert(err == 0);
-
-    err = js_release_arraybuffer_backing_store(env, message->backing_store);
-    assert(err == 0);
-    break;
-  }
-
-  port->cursors.read = (port->cursors.read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
-
-  if (sender->state & bare_channel_port_state_inited) {
-    uv_async_send(&sender->signals.drain);
+      if (sender->state & bare_channel_port_state_inited) {
+        err = uv_async_send(&sender->signals.drain);
+        assert(err == 0);
+      }
+    }
   }
 
   return result;
@@ -518,16 +509,17 @@ bare_channel_port_write(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int32(env, argv[1], &id);
   assert(err == 0);
 
-  bare_channel_port_t *port = &channel->ports[id];
   bare_channel_port_t *receiver = &channel->ports[(id + 1) & 1];
 
   bool success = true;
 
-  int next = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
+  int write = receiver->cursors.write;
+
+  int next = (write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
   if (next == receiver->cursors.read) success = false;
   else {
-    bare_channel_message_t *message = &receiver->messages[receiver->cursors.write];
+    bare_channel_message_t *message = &receiver->messages[write];
 
     message->type = bare_channel_message_data;
 
@@ -537,14 +529,13 @@ bare_channel_port_write(js_env_t *env, js_callback_info_t *info) {
     err = js_detach_arraybuffer(env, argv[2]);
     assert(err == 0);
 
-    receiver->cursors.write = (receiver->cursors.write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
+    receiver->cursors.write = next;
 
     if (receiver->state & bare_channel_port_state_inited) {
-      if (receiver->state & bare_channel_port_state_waiting) {
-        uv_sem_post(&receiver->wait);
-      } else {
-        uv_async_send(&receiver->signals.flush);
-      }
+      uv_cond_signal(&receiver->available);
+
+      err = uv_async_send(&receiver->signals.flush);
+      assert(err == 0);
     }
   }
 
