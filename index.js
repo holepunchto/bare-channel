@@ -1,4 +1,5 @@
 const EventEmitter = require('bare-events')
+const { Readable, Writable } = require('bare-stream')
 const structuredClone = require('bare-structured-clone')
 const FIFO = require('fast-fifo')
 const binding = require('./binding')
@@ -128,6 +129,14 @@ class Port extends EventEmitter {
     } while (await this._wait())
   }
 
+  createReadStream(opts) {
+    return new PortReadStream(this, opts)
+  }
+
+  createWriteStream(opts) {
+    return new PortWriteStream(this, opts)
+  }
+
   close() {
     if (this._closing === null) this._closing = this._close()
     return this._closing
@@ -241,5 +250,51 @@ class Port extends EventEmitter {
 
   _onclose() {
     this._onclosed()
+  }
+}
+
+class PortReadStream extends Readable {
+  constructor(port, opts) {
+    super(opts)
+
+    this._port = port
+  }
+
+  async _read() {
+    try {
+      this.push(await this._port.read())
+    } catch (err) {
+      this.destroy(err)
+    }
+  }
+}
+
+class PortWriteStream extends Writable {
+  constructor(port, opts) {
+    super(opts)
+
+    this._port = port
+  }
+
+  async _write(chunk, encoding, cb) {
+    let err = null
+    try {
+      await this._port.write(chunk)
+    } catch (e) {
+      err = e
+    }
+
+    cb(err)
+  }
+
+  async _final(cb) {
+    let err = null
+    try {
+      await this._port.close()
+    } catch (e) {
+      err = e
+    }
+
+    cb(err)
   }
 }
