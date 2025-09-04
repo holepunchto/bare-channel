@@ -95,6 +95,8 @@ bare_channel__push_read(bare_channel_port_t *port) {
 
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
+  if (sender->state & bare_channel_port_state_destroyed) return;
+
   if (sender->state & bare_channel_port_state_ready) {
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
@@ -121,6 +123,8 @@ bare_channel__push_write(bare_channel_port_t *port) {
   int next = (write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
   port->cursors.write = next;
+
+  if (port->state & bare_channel_port_state_destroyed) return;
 
   if (port->state & bare_channel_port_state_ready) {
     uv_cond_signal(&port->conditions.flush);
