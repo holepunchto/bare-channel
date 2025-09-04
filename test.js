@@ -245,3 +245,31 @@ test('detect close on teardown', async (t) => {
     thread.join()
   })
 })
+
+test('close after unref', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      port.unref()
+      port.close()
+    }
+  )
+
+  const port = channel.connect()
+
+  port.on('close', () => {
+    t.pass('port closed')
+
+    thread.join()
+  })
+})
