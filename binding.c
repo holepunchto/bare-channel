@@ -15,9 +15,10 @@ typedef struct bare_channel_message_s bare_channel_message_t;
 
 enum {
   bare_channel_port_state_ready = 0x1,
-  bare_channel_port_state_ended = 0x2,
-  bare_channel_port_state_destroyed = 0x4,
-  bare_channel_port_state_exiting = 0x8
+  bare_channel_port_state_ending = 0x2,
+  bare_channel_port_state_ended = 0x4,
+  bare_channel_port_state_remote_ended = 0x8,
+  bare_channel_port_state_exiting = 0x10
 } bare_channel_port_state_t;
 
 struct bare_channel_message_s {
@@ -95,8 +96,6 @@ bare_channel__push_read(bare_channel_port_t *port) {
 
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
-  if (sender->state & bare_channel_port_state_destroyed) return;
-
   if (sender->state & bare_channel_port_state_ready) {
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
@@ -124,8 +123,6 @@ bare_channel__push_write(bare_channel_port_t *port) {
 
   port->cursors.write = next;
 
-  if (port->state & bare_channel_port_state_destroyed) return;
-
   if (port->state & bare_channel_port_state_ready) {
     uv_cond_signal(&port->conditions.flush);
 
@@ -139,7 +136,6 @@ bare_channel__on_close(uv_handle_t *handle);
 
 static inline void
 bare_channel__close(bare_channel_port_t *port) {
-  port->state |= bare_channel_port_state_destroyed;
   port->closing = 2;
 
 #define V(signal) \
@@ -149,23 +145,26 @@ bare_channel__close(bare_channel_port_t *port) {
 #undef V
 }
 
-static inline bool
+static inline void
 bare_channel__end(bare_channel_port_t *port) {
   int err;
+
+  if (port->state & bare_channel_port_state_ended) return;
+
+  port->state |= bare_channel_port_state_ending;
 
   bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
 
   bare_channel_message_t *message = bare_channel__peek_write(receiver);
 
-  if (message == NULL) return false;
+  if (message == NULL) return;
 
   port->state |= bare_channel_port_state_ended;
+  port->state &= ~bare_channel_port_state_ending;
 
   message->type = bare_channel_message_end;
 
   bare_channel__push_write(receiver);
-
-  return true;
 }
 
 static void
@@ -174,8 +173,29 @@ bare_channel__on_drain(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (port->state & bare_channel_port_state_exiting) bare_channel__end(port);
-  else {
+  if (port->state & bare_channel_port_state_ending) bare_channel__end(port);
+  else if (port->state & bare_channel_port_state_remote_ended) bare_channel__close(port);
+  else if (port->state & bare_channel_port_state_exiting) {
+    while (true) {
+      bare_channel_message_t *message = bare_channel__peek_read(port);
+
+      if (message == NULL) break;
+
+      if (message->type == bare_channel_message_end) {
+        port->state |= bare_channel_port_state_remote_ended;
+
+        bare_channel__push_read(port);
+
+        if (port->state & bare_channel_port_state_ended) {
+          bare_channel__close(port);
+        } else {
+          bare_channel__end(port);
+        }
+      } else {
+        bare_channel__push_read(port);
+      }
+    }
+  } else {
     js_env_t *env = port->env;
 
     js_handle_scope_t *scope;
@@ -203,7 +223,7 @@ bare_channel__on_flush(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (port->state & bare_channel_port_state_exiting) bare_channel__close(port);
+  if (port->state & bare_channel_port_state_exiting) return;
   else {
     js_env_t *env = port->env;
 
@@ -295,7 +315,7 @@ bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
 
   port->state |= bare_channel_port_state_exiting;
 
-  if (port->state & bare_channel_port_state_ended) return;
+  if (port->state & bare_channel_port_state_ending) return;
 
   bare_channel__end(port);
 }
@@ -406,33 +426,6 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
-bare_channel_port_destroy(js_env_t *env, js_callback_info_t *info) {
-  int err;
-
-  size_t argc = 2;
-  js_value_t *argv[2];
-
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
-  assert(err == 0);
-
-  assert(argc == 2);
-
-  bare_channel_t *channel;
-  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
-  assert(err == 0);
-
-  int id;
-  err = js_get_value_int32(env, argv[1], &id);
-  assert(err == 0);
-
-  bare_channel_port_t *port = &channel->ports[id];
-
-  bare_channel__close(port);
-
-  return NULL;
-}
-
-static js_value_t *
 bare_channel_port_wait(js_env_t *env, js_callback_info_t *info) {
   int err;
 
@@ -485,21 +478,31 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int32(env, argv[1], &id);
   assert(err == 0);
 
-  bare_channel_port_t *receiver = &channel->ports[id];
+  bare_channel_port_t *port = &channel->ports[id];
 
-  bare_channel_message_t *message = bare_channel__peek_read(receiver);
+  bare_channel_message_t *message = bare_channel__peek_read(port);
 
   js_value_t *result;
 
   if (message) {
     switch (message->type) {
     case bare_channel_message_end: {
+      port->state |= bare_channel_port_state_remote_ended;
+
+      bare_channel__push_read(port);
+
+      if (port->state & bare_channel_port_state_ended) {
+        bare_channel__close(port);
+      } else {
+        bare_channel__end(port);
+      }
+
       js_value_t *ctx;
-      err = js_get_reference_value(env, receiver->ctx, &ctx);
+      err = js_get_reference_value(env, port->ctx, &ctx);
       assert(err == 0);
 
       js_value_t *on_end;
-      err = js_get_reference_value(env, receiver->on_end, &on_end);
+      err = js_get_reference_value(env, port->on_end, &on_end);
       assert(err == 0);
 
       js_call_function(env, ctx, on_end, 0, NULL, NULL);
@@ -517,7 +520,7 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
       err = js_release_arraybuffer_backing_store(env, message->backing_store);
       assert(err == 0);
 
-      bare_channel__push_read(receiver);
+      bare_channel__push_read(port);
     }
   } else {
     err = js_get_null(env, &result);
@@ -592,13 +595,9 @@ bare_channel_port_end(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  bool success = bare_channel__end(port);
+  bare_channel__end(port);
 
-  js_value_t *result;
-  err = js_get_boolean(env, success, &result);
-  assert(err == 0);
-
-  return result;
+  return NULL;
 }
 
 static js_value_t *
@@ -679,7 +678,6 @@ bare_channel_exports(js_env_t *env, js_value_t *exports) {
   V("channelInit", bare_channel_init)
 
   V("portInit", bare_channel_port_init)
-  V("portDestroy", bare_channel_port_destroy)
   V("portWait", bare_channel_port_wait)
   V("portRead", bare_channel_port_read)
   V("portWrite", bare_channel_port_write)

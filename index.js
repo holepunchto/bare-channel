@@ -1,9 +1,9 @@
+const FastFIFO = require('fast-fifo')
 const EventEmitter = require('bare-events')
 const structuredClone = require('bare-structured-clone')
-const FIFO = require('fast-fifo')
 const binding = require('./binding')
 
-const MAX_BUFFER = 128
+const BUFFER_LIMIT = 128
 
 module.exports = exports = class Channel {
   constructor(opts = {}) {
@@ -28,24 +28,12 @@ class Port extends EventEmitter {
 
     this._channel = channel
 
-    this._closing = null
-    this._buffer = new FIFO()
+    this._buffer = new FastFIFO()
     this._backpressured = false
 
-    this._drainedPromise = null
-    this._drainedQueue = (resolve) => {
-      this._ondrained = resolve
-    }
-
-    this._waitPromise = null
-    this._waitQueue = (resolve) => {
-      this._onwait = resolve
-    }
-
-    this._onwait = null
-    this._ondrained = null
-    this._onclosed = null
-    this._onremoteclose = null
+    this._draining = null
+    this._flushing = null
+    this._closing = null
 
     this._id = binding.portInit(
       channel.handle,
@@ -55,35 +43,24 @@ class Port extends EventEmitter {
       this._onend,
       this._onclose
     )
-
-    this.closed = false
-    this.remoteClosed = false
-  }
-
-  get buffered() {
-    return this._buffer.length
-  }
-
-  get drained() {
-    return this._drainedPromise !== null
-  }
-
-  get closing() {
-    return this._closing !== null
   }
 
   async read() {
-    do {
-      if (this._buffer.length > 0) return this._buffer.shift()
-    } while (await this._wait())
+    while (this._flushing !== null) await this._flushing.promise
 
-    return null
+    while (true) {
+      if (this._backpressured) this._onflush()
+
+      if (this._buffer.length > 0) return this._buffer.shift()
+
+      this._flushing = Promise.withResolvers()
+
+      await this._flushing.promise
+    }
   }
 
   readSync() {
     while (true) {
-      if (this._closing !== null) return null
-
       if (this._buffer.length > 0) return this._buffer.shift()
 
       binding.portWait(this._channel.handle, this._id)
@@ -105,104 +82,80 @@ class Port extends EventEmitter {
 
     structuredClone.preencode(state, serialized)
 
-    const data = (state.buffer = Buffer.allocUnsafe(state.end))
+    const data = new ArrayBuffer(state.end)
+
+    state.buffer = Buffer.from(data)
 
     structuredClone.encode(state, serialized)
 
+    while (this._draining !== null) await this._draining.promise
+
+    if (this._closing !== null) return false
+
     while (true) {
-      while (this._drainedPromise !== null) await this._drainedPromise
+      const flushed = binding.portWrite(this._channel.handle, this._id, data)
 
-      if (this._closing !== null) return false
+      if (flushed) return true
 
-      if (binding.portWrite(this._channel.handle, this._id, data.buffer)) break
+      this._draining = Promise.withResolvers()
 
-      if (this._drainedPromise === null) {
-        this._drainedPromise = new Promise(this._drainedQueue)
-      }
+      await this._draining.promise
     }
   }
 
-  async *[Symbol.asyncIterator]() {
-    do {
-      while (this._buffer.length > 0) yield this._buffer.shift()
-    } while (await this._wait())
-  }
+  async close() {
+    while (this._draining !== null) await this._draining.promise
 
-  close() {
-    if (this._closing === null) this._closing = this._close()
-    return this._closing
-  }
-
-  async _close() {
-    await Promise.resolve() // Avoid re-entry
-
-    this.emit('closing')
-
-    while (this._drainedPromise !== null) await this._drainedPromise
+    if (this._closing !== null) return this._closing.promise
 
     binding.portEnd(this._channel.handle, this._id)
 
-    if (!this.remoteClosed) {
-      await new Promise((resolve) => {
-        this._onremoteclose = resolve
-      })
-    }
+    this._closing = Promise.withResolvers()
 
-    this._onremoteclose = null
-
-    const destroyed = new Promise((resolve) => {
-      this._onclosed = resolve
-    })
-
-    binding.portDestroy(this._channel.handle, this._id)
-
-    await destroyed
-
-    this._onclosed = null
-
-    this.closed = true
-    this.emit('close')
+    await this._closing.promise
   }
 
   ref() {
+    if (this._closing !== null) return
+
     binding.portRef(this._channel.handle, this._id)
   }
 
   unref() {
+    if (this._closing !== null) return
+
     binding.portUnref(this._channel.handle, this._id)
   }
 
-  _wait() {
-    if (this._backpressured) this._onflush()
-
-    if (this._closing !== null || this._buffer.length > 0) {
-      return Promise.resolve(this._closing === null)
+  *[Symbol.iterator]() {
+    while (true) {
+      const data = this.readSync()
+      if (data === null) break
+      yield data
     }
+  }
 
-    if (this._waitPromise === null) {
-      this._waitPromise = new Promise(this._waitQueue)
+  async *[Symbol.asyncIterator]() {
+    while (true) {
+      const data = await this.read()
+      if (data === null) break
+      yield data
     }
-
-    return this._waitPromise
   }
 
   _ondrain() {
-    if (this._ondrained === null) return
+    if (this._draining === null) return
 
-    const ondrained = this._ondrained
-    this._ondrained = null
-    this._drainedPromise = null
-
-    ondrained(this._closing === null)
+    const draining = this._draining
+    this._draining = null
+    draining.resolve()
   }
 
   _onflush() {
-    this._backpressured = false
-
-    while (this._buffer.length < MAX_BUFFER) {
+    while (this._buffer.length < BUFFER_LIMIT) {
       const data = binding.portRead(this._channel.handle, this._id)
 
-      if (data === null) return
+      if (data === null) break
 
       const state = {
         start: 0,
@@ -216,30 +169,28 @@ class Port extends EventEmitter {
       )
 
       this._buffer.push(value)
-      this._onactive()
     }
 
-    this._backpressured = true
-  }
+    this._backpressured = this._buffer.length === BUFFER_LIMIT
 
-  _onactive() {
-    if (this._onwait === null) return
+    if (this._flushing === null) return
 
-    const onwait = this._onwait
-    this._onwait = null
-    this._waitPromise = null
-
-    onwait(this._closing === null)
+    const flushing = this._flushing
+    this._flushing = null
+    flushing.resolve()
   }
 
   _onend() {
-    this.remoteClosed = true
-
-    if (this._onremoteclose !== null) this._onremoteclose()
-    else this.close()
+    this.emit('end')
   }
 
   _onclose() {
-    this._onclosed()
+    if (this._closing === null) this._closing = Promise.withResolvers()
+
+    const closing = this._closing
+    this._closing = null
+    closing.resolve()
+
+    this.emit('close')
   }
 }

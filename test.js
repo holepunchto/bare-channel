@@ -135,9 +135,9 @@ test('big echo', async (t) => {
   )
 
   const port = channel.connect()
-  const sent = ['ping']
+  const sent = []
 
-  for (let i = 0; i < 1e5; i++) sent.push(sent[0])
+  for (let i = 0; i < 1e5; i++) sent.push(i)
 
   const consume = t.test('consume', async (t) => {
     const read = []
@@ -219,7 +219,7 @@ test('serializable interface', async (t) => {
   thread.join()
 })
 
-test('detect close on teardown', async (t) => {
+test('unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
