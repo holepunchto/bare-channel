@@ -49,6 +49,7 @@ struct bare_channel_port_s {
   } cursors;
 
   struct {
+    uv_cond_t drain;
     uv_cond_t flush;
   } conditions;
 
@@ -97,6 +98,8 @@ bare_channel__push_read(bare_channel_port_t *port) {
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
   if (sender->state & bare_channel_port_state_ready) {
+    uv_cond_signal(&port->conditions.drain);
+
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
   }
@@ -289,6 +292,7 @@ bare_channel__on_close(uv_handle_t *handle) {
 
 #define V(condition) \
   uv_cond_destroy(&port->conditions.condition);
+  V(drain)
   V(flush)
 #undef V
 
@@ -402,6 +406,7 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
 #define V(condition) \
   err = uv_cond_init(&port->conditions.condition); \
   assert(err == 0);
+  V(drain)
   V(flush)
 #undef V
 
@@ -426,7 +431,7 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
-bare_channel_port_wait(js_env_t *env, js_callback_info_t *info) {
+bare_channel_port_wait_drain(js_env_t *env, js_callback_info_t *info) {
   int err;
 
   size_t argc = 2;
@@ -449,7 +454,40 @@ bare_channel_port_wait(js_env_t *env, js_callback_info_t *info) {
 
   uv_mutex_lock(&port->lock);
 
-  while (port->cursors.read == port->cursors.write) {
+  while (bare_channel__peek_write(port) == NULL) {
+    uv_cond_wait(&port->conditions.drain, &port->lock);
+  }
+
+  uv_mutex_unlock(&port->lock);
+
+  return NULL;
+}
+
+static js_value_t *
+bare_channel_port_wait_flush(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 2;
+  js_value_t *argv[2];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 2);
+
+  bare_channel_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
+  assert(err == 0);
+
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_port_t *port = &channel->ports[id];
+
+  uv_mutex_lock(&port->lock);
+
+  while (bare_channel__peek_read(port) == NULL) {
     uv_cond_wait(&port->conditions.flush, &port->lock);
   }
 
@@ -678,7 +716,8 @@ bare_channel_exports(js_env_t *env, js_value_t *exports) {
   V("channelInit", bare_channel_init)
 
   V("portInit", bare_channel_port_init)
-  V("portWait", bare_channel_port_wait)
+  V("portWaitDrain", bare_channel_port_wait_drain)
+  V("portWaitFlush", bare_channel_port_wait_flush)
   V("portRead", bare_channel_port_read)
   V("portWrite", bare_channel_port_write)
   V("portEnd", bare_channel_port_end)

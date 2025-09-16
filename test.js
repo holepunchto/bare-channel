@@ -114,6 +114,43 @@ test('read blocking', async (t) => {
   thread.join()
 })
 
+test('write blocking', async (t) => {
+  t.plan(2)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      for await (const data of port) {
+        await port.write(data)
+      }
+    }
+  )
+
+  const port = channel.connect()
+  const expected = ['ping', 'pong']
+
+  for (const data of expected) {
+    port.writeSync(data)
+  }
+
+  while (true) {
+    t.alike(await port.read(), expected.shift())
+    if (expected.length === 0) break
+  }
+
+  await port.close()
+
+  thread.join()
+})
+
 test('big echo', async (t) => {
   t.plan(1)
 

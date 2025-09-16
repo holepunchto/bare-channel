@@ -63,34 +63,20 @@ class Port extends EventEmitter {
     while (true) {
       if (this._buffer.length > 0) return this._buffer.shift()
 
-      binding.portWait(this._channel.handle, this._id)
+      binding.portWaitFlush(this._channel.handle, this._id)
 
       this._onflush()
     }
   }
 
   async write(value, opts = {}) {
-    if (value === null) return
-
-    const serialized = structuredClone.serializeWithTransfer(
-      value,
-      opts.transfer,
-      this._channel.interfaces
-    )
-
-    const state = { start: 0, end: 0, buffer: null }
-
-    structuredClone.preencode(state, serialized)
-
-    const data = new ArrayBuffer(state.end)
-
-    state.buffer = Buffer.from(data)
-
-    structuredClone.encode(state, serialized)
+    if (value === null) return false
 
     while (this._draining !== null) await this._draining.promise
 
     if (this._closing !== null) return false
+
+    const data = encode(this._channel, value, opts)
 
     while (true) {
       const flushed = binding.portWrite(this._channel.handle, this._id, data)
@@ -100,6 +86,20 @@ class Port extends EventEmitter {
       this._draining = Promise.withResolvers()
 
       await this._draining.promise
+    }
+  }
+
+  writeSync(value, opts = {}) {
+    if (value === null) return false
+
+    const data = encode(this._channel, value, opts)
+
+    while (true) {
+      const flushed = binding.portWrite(this._channel.handle, this._id, data)
+
+      if (flushed) return true
+
+      binding.portWaitDrain(this._channel.handle, this._id)
     }
   }
 
@@ -157,18 +157,7 @@ class Port extends EventEmitter {
 
       if (data === null) break
 
-      const state = {
-        start: 0,
-        end: data.byteLength,
-        buffer: Buffer.from(data)
-      }
-
-      const value = structuredClone.deserializeWithTransfer(
-        structuredClone.decode(state),
-        this._channel.interfaces
-      )
-
-      this._buffer.push(value)
+      this._buffer.push(decode(this._channel, data))
     }
 
     this._backpressured = this._buffer.length === BUFFER_LIMIT
@@ -193,4 +182,37 @@ class Port extends EventEmitter {
 
     this.emit('close')
   }
+}
+
+function encode(channel, value, opts) {
+  const serialized = structuredClone.serializeWithTransfer(
+    value,
+    opts.transfer,
+    channel.interfaces
+  )
+
+  const state = { start: 0, end: 0, buffer: null }
+
+  structuredClone.preencode(state, serialized)
+
+  const data = new ArrayBuffer(state.end)
+
+  state.buffer = Buffer.from(data)
+
+  structuredClone.encode(state, serialized)
+
+  return data
+}
+
+function decode(channel, data) {
+  const state = {
+    start: 0,
+    end: data.byteLength,
+    buffer: Buffer.from(data)
+  }
+
+  return structuredClone.deserializeWithTransfer(
+    structuredClone.decode(state),
+    channel.interfaces
+  )
 }
