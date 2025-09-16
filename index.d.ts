@@ -38,7 +38,8 @@ interface Port<T = unknown>
   read(): Promise<T | null>
   readSync(): T | null
 
-  write(value: T, opts?: { transfer: TransferableValue[] }): Promise<void>
+  write(value: T, opts?: { transfer: TransferableValue[] }): Promise<boolean>
+  writeSync(value: T, opts?: { transfer: TransferableValue[] }): boolean
 
   close(): Promise<void>
 }
