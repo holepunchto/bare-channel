@@ -1,4 +1,4 @@
-const FastFIFO = require('fast-fifo')
+const FIFO = require('fast-fifo')
 const EventEmitter = require('bare-events')
 const structuredClone = require('bare-structured-clone')
 const binding = require('./binding')
@@ -28,7 +28,7 @@ class Port extends EventEmitter {
 
     this._channel = channel
 
-    this._buffer = new FastFIFO()
+    this._buffer = new FIFO()
     this._backpressured = false
 
     this._draining = null
