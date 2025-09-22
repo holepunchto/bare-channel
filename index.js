@@ -1,9 +1,7 @@
-const FIFO = require('fast-fifo')
 const EventEmitter = require('bare-events')
 const structuredClone = require('bare-structured-clone')
 const binding = require('./binding')
-
-const BUFFER_LIMIT = 128
+const Queue = require('./lib/queue')
 
 module.exports = exports = class Channel {
   constructor(opts = {}) {
@@ -28,7 +26,7 @@ class Port extends EventEmitter {
 
     this._channel = channel
 
-    this._buffer = new FIFO()
+    this._queue = new Queue()
     this._backpressured = false
 
     this._draining = null
@@ -51,7 +49,7 @@ class Port extends EventEmitter {
     while (true) {
       if (this._backpressured) this._onflush()
 
-      if (this._buffer.length > 0) return this._buffer.shift()
+      if (this._queue.length > 0) return this._queue.shift()
 
       this._flushing = Promise.withResolvers()
 
@@ -61,7 +59,7 @@ class Port extends EventEmitter {
 
   readSync() {
     while (true) {
-      if (this._buffer.length > 0) return this._buffer.shift()
+      if (this._queue.length > 0) return this._queue.shift()
 
       binding.portWaitFlush(this._channel.handle, this._id)
 
@@ -152,15 +150,15 @@ class Port extends EventEmitter {
   }
 
   _onflush() {
-    while (this._buffer.length < BUFFER_LIMIT) {
+    while (this._queue.length < this._queue.capacity) {
       const data = binding.portRead(this._channel.handle, this._id)
 
       if (data === null) break
 
-      this._buffer.push(decode(this._channel, data))
+      this._queue.push(decode(this._channel, data))
     }
 
-    this._backpressured = this._buffer.length === BUFFER_LIMIT
+    this._backpressured = this._queue.length === this._queue.capacity
 
     if (this._flushing === null) return
 
