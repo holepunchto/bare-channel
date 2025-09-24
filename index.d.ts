@@ -4,6 +4,12 @@ import {
   TransferableConstructor,
   TransferableValue
 } from 'bare-structured-clone'
+import {
+  Readable,
+  ReadableOptions,
+  Writable,
+  WritableOptions
+} from 'bare-stream'
 
 interface ChannelOptions {
   handle?: SharedArrayBuffer
@@ -40,6 +46,9 @@ interface Port<T = unknown>
 
   write(value: T, opts?: { transfer: TransferableValue[] }): Promise<boolean>
   writeSync(value: T, opts?: { transfer: TransferableValue[] }): boolean
+
+  createReadStream(opts?: ReadableOptions<Port<T>>): Readable
+  createWriteStream(opts?: WritableOptions<Port<T>>): Writable
 
   close(): Promise<void>
 }
