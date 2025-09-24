@@ -5,6 +5,8 @@ import {
   TransferableValue
 } from 'bare-structured-clone'
 import {
+  Duplex,
+  DuplexOptions,
   Readable,
   ReadableOptions,
   Writable,
@@ -49,6 +51,7 @@ interface Port<T = unknown>
 
   createReadStream(opts?: ReadableOptions<Port<T>>): Readable
   createWriteStream(opts?: WritableOptions<Port<T>>): Writable
+  createDuplexStream(opts?: DuplexOptions<Port<T>>): Duplex
 
   close(): Promise<void>
 }

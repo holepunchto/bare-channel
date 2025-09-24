@@ -1,5 +1,5 @@
 const EventEmitter = require('bare-events')
-const { Readable, Writable } = require('bare-stream')
+const { Readable, Writable, Duplex } = require('bare-stream')
 const structuredClone = require('bare-structured-clone')
 const binding = require('./binding')
 const Queue = require('./lib/queue')
@@ -110,6 +110,10 @@ class Port extends EventEmitter {
     return new PortWriteStream(this, opts)
   }
 
+  createDuplexStream(opts) {
+    return new PortDuplexStream(this, opts)
+  }
+
   async close() {
     while (this._draining !== null) await this._draining.promise
 
@@ -212,6 +216,44 @@ class PortWriteStream extends Writable {
     super(opts)
 
     this._port = port
+  }
+
+  async _write(chunk, encoding, cb) {
+    let err = null
+    try {
+      await this._port.write(chunk)
+    } catch (e) {
+      err = e
+    }
+
+    cb(err)
+  }
+
+  async _final(cb) {
+    let err = null
+    try {
+      await this._port.close()
+    } catch (e) {
+      err = e
+    }
+
+    cb(err)
+  }
+}
+
+class PortDuplexStream extends Duplex {
+  constructor(port, opts) {
+    super(opts)
+
+    this._port = port
+  }
+
+  async _read() {
+    try {
+      this.push(await this._port.read())
+    } catch (err) {
+      this.destroy(err)
+    }
   }
 
   async _write(chunk, encoding, cb) {
