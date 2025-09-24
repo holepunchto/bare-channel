@@ -110,7 +110,7 @@ class Port extends EventEmitter {
     return new PortWriteStream(this, opts)
   }
 
-  createDuplexStream(opts) {
+  createStream(opts) {
     return new PortDuplexStream(this, opts)
   }
 

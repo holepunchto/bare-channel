@@ -51,7 +51,7 @@ interface Port<T = unknown>
 
   createReadStream(opts?: ReadableOptions<Port<T>>): Readable
   createWriteStream(opts?: WritableOptions<Port<T>>): Writable
-  createDuplexStream(opts?: DuplexOptions<Port<T>>): Duplex
+  createStream(opts?: DuplexOptions<Port<T>>): Duplex
 
   close(): Promise<void>
 }
