@@ -24,24 +24,22 @@ declare class Channel {
 }
 
 interface PortEvents extends EventMap {
-  closing: []
+  end: []
   close: []
 }
 
-interface Port<T = unknown> extends EventEmitter<PortEvents>, AsyncIterable<T> {
-  readonly closed: boolean
-  readonly remoteClosed: boolean
-  readonly buffered: number
-  readonly drained: boolean
-  readonly closing: boolean
-
+interface Port<T = unknown>
+  extends EventEmitter<PortEvents>,
+    Iterable<T>,
+    AsyncIterable<T> {
   ref(): void
   unref(): void
 
   read(): Promise<T | null>
   readSync(): T | null
 
-  write(value: T, opts?: { transfer: TransferableValue[] }): Promise<void>
+  write(value: T, opts?: { transfer: TransferableValue[] }): Promise<boolean>
+  writeSync(value: T, opts?: { transfer: TransferableValue[] }): boolean
 
   close(): Promise<void>
 }

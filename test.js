@@ -114,6 +114,43 @@ test('read blocking', async (t) => {
   thread.join()
 })
 
+test('write blocking', async (t) => {
+  t.plan(2)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      for await (const data of port) {
+        await port.write(data)
+      }
+    }
+  )
+
+  const port = channel.connect()
+  const expected = ['ping', 'pong']
+
+  for (const data of expected) {
+    port.writeSync(data)
+  }
+
+  while (true) {
+    t.alike(await port.read(), expected.shift())
+    if (expected.length === 0) break
+  }
+
+  await port.close()
+
+  thread.join()
+})
+
 test('big echo', async (t) => {
   t.plan(1)
 
@@ -135,9 +172,9 @@ test('big echo', async (t) => {
   )
 
   const port = channel.connect()
-  const sent = ['ping']
+  const sent = []
 
-  for (let i = 0; i < 1e5; i++) sent.push(sent[0])
+  for (let i = 0; i < 1e5; i++) sent.push(i)
 
   const consume = t.test('consume', async (t) => {
     const read = []
@@ -219,7 +256,7 @@ test('serializable interface', async (t) => {
   thread.join()
 })
 
-test('detect close on teardown', async (t) => {
+test('unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
@@ -234,6 +271,34 @@ test('detect close on teardown', async (t) => {
       const port = channel.connect()
 
       port.unref() // Let the thread exit
+    }
+  )
+
+  const port = channel.connect()
+
+  port.on('close', () => {
+    t.pass('port closed')
+
+    thread.join()
+  })
+})
+
+test('close after unref', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      port.unref()
+      port.close()
     }
   )
 

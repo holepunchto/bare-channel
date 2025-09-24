@@ -1,6 +1,6 @@
 {
   "name": "bare-channel",
-  "version": "5.0.3",
+  "version": "5.1.1",
   "description": "Inter-thread messaging for JavaScript",
   "exports": {
     ".": "./index.js",
@@ -11,6 +11,7 @@
     "binding.c",
     "binding.js",
     "CMakeLists.txt",
+    "lib",
     "prebuilds"
   ],
   "addon": true,
@@ -33,8 +34,7 @@
   "dependencies": {
     "bare-events": "^2.0.0",
     "bare-stream": "^2.7.0",
-    "bare-structured-clone": "^1.4.0",
-    "fast-fifo": "^1.3.2"
+    "bare-structured-clone": "^1.4.0"
   },
   "devDependencies": {
     "brittle": "^3.1.1",
