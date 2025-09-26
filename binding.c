@@ -98,7 +98,7 @@ bare_channel__push_read(bare_channel_port_t *port) {
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
   if (sender->state & bare_channel_port_state_ready) {
-    uv_cond_signal(&port->conditions.drain);
+    uv_cond_signal(&sender->conditions.drain);
 
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
@@ -178,27 +178,8 @@ bare_channel__on_drain(uv_async_t *handle) {
 
   if (port->state & bare_channel_port_state_ending) bare_channel__end(port);
   else if (port->state & bare_channel_port_state_remote_ended) bare_channel__close(port);
-  else if (port->state & bare_channel_port_state_exiting) {
-    while (true) {
-      bare_channel_message_t *message = bare_channel__peek_read(port);
-
-      if (message == NULL) break;
-
-      if (message->type == bare_channel_message_end) {
-        port->state |= bare_channel_port_state_remote_ended;
-
-        bare_channel__push_read(port);
-
-        if (port->state & bare_channel_port_state_ended) {
-          bare_channel__close(port);
-        } else {
-          bare_channel__end(port);
-        }
-      } else {
-        bare_channel__push_read(port);
-      }
-    }
-  } else {
+  else if (port->state & bare_channel_port_state_exiting) return;
+  else {
     js_env_t *env = port->env;
 
     js_handle_scope_t *scope;
@@ -226,8 +207,27 @@ bare_channel__on_flush(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (port->state & bare_channel_port_state_exiting) return;
-  else {
+  if (port->state & bare_channel_port_state_exiting) {
+    while (true) {
+      bare_channel_message_t *message = bare_channel__peek_read(port);
+
+      if (message == NULL) break;
+
+      if (message->type == bare_channel_message_end) {
+        port->state |= bare_channel_port_state_remote_ended;
+
+        bare_channel__push_read(port);
+
+        if (port->state & bare_channel_port_state_ended) {
+          bare_channel__close(port);
+        } else {
+          bare_channel__end(port);
+        }
+      } else {
+        bare_channel__push_read(port);
+      }
+    }
+  } else {
     js_env_t *env = port->env;
 
     js_handle_scope_t *scope;
@@ -310,12 +310,6 @@ bare_channel__on_close(uv_handle_t *handle) {
 static void
 bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
   bare_channel_port_t *port = data;
-
-#define V(signal) \
-  uv_ref((uv_handle_t *) &port->signals.signal);
-  V(drain)
-  V(flush)
-#undef V
 
   port->state |= bare_channel_port_state_exiting;
 
