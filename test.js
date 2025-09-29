@@ -310,3 +310,32 @@ test('close after unref', async (t) => {
     thread.join()
   })
 })
+
+test('write after remote end', async (t) => {
+  t.plan(2)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      port.close()
+    }
+  )
+
+  const port = channel.connect()
+
+  port.on('close', async () => {
+    t.pass('port closed')
+
+    t.is(await port.write('ping'), false)
+
+    thread.join()
+  })
+})
