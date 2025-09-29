@@ -98,7 +98,11 @@ bare_channel__push_read(bare_channel_port_t *port) {
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
   if (sender->state & bare_channel_port_state_ready) {
+    uv_mutex_lock(&port->lock);
+
     uv_cond_signal(&sender->conditions.drain);
+
+    uv_mutex_unlock(&port->lock);
 
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
@@ -127,7 +131,11 @@ bare_channel__push_write(bare_channel_port_t *port) {
   port->cursors.write = next;
 
   if (port->state & bare_channel_port_state_ready) {
+    uv_mutex_lock(&port->lock);
+
     uv_cond_signal(&port->conditions.flush);
+
+    uv_mutex_unlock(&port->lock);
 
     err = uv_async_send(&port->signals.flush);
     assert(err == 0);
