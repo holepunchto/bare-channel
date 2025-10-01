@@ -365,3 +365,79 @@ test('close immediately after write', async (t) => {
 
   thread.join()
 })
+
+test('read stream', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      for (let i = 0; i < 1e3; i++) {
+        await port.write(i)
+      }
+
+      await port.close()
+    }
+  )
+
+  const port = channel.connect()
+  const stream = port.createReadStream()
+  const received = []
+
+  stream
+    .on('data', (value) => received.push(value))
+    .on('close', () => {
+      t.alike(
+        received,
+        new Array(1e3).fill(0).map((_, i) => i)
+      )
+
+      thread.join()
+    })
+})
+
+test('write stream', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+      const stream = port.createWriteStream()
+
+      for (let i = 0; i < 1e3; i++) {
+        stream.write(Buffer.from(`${i}`))
+      }
+
+      stream.on('close', () => port.close()).end()
+    }
+  )
+
+  const port = channel.connect()
+  const received = []
+
+  for await (const i of port) {
+    received.push(i.toString())
+  }
+
+  t.alike(
+    received,
+    new Array(1e3).fill(0).map((_, i) => `${i}`)
+  )
+
+  thread.join()
+})
