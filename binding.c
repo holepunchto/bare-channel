@@ -13,14 +13,6 @@ typedef struct bare_channel_s bare_channel_t;
 typedef struct bare_channel_port_s bare_channel_port_t;
 typedef struct bare_channel_message_s bare_channel_message_t;
 
-enum {
-  bare_channel_port_state_ready = 0x1,
-  bare_channel_port_state_ending = 0x2,
-  bare_channel_port_state_ended = 0x4,
-  bare_channel_port_state_remote_ended = 0x8,
-  bare_channel_port_state_exiting = 0x10
-} bare_channel_port_state_t;
-
 struct bare_channel_message_s {
   enum {
     bare_channel_message_end,
@@ -37,9 +29,13 @@ struct bare_channel_port_s {
 
   uint8_t id;
 
-  uv_mutex_t lock;
-
-  atomic_int state;
+  struct {
+    atomic_bool ready;
+    bool ending;
+    bool ended;
+    bool remote_ended;
+    bool exiting;
+  } state;
 
   bare_channel_message_t messages[BARE_CHANNEL_PORT_CAPACITY];
 
@@ -47,6 +43,11 @@ struct bare_channel_port_s {
     atomic_int read;
     atomic_int write;
   } cursors;
+
+  struct {
+    uv_mutex_t drain;
+    uv_mutex_t flush;
+  } locks;
 
   struct {
     uv_cond_t drain;
@@ -78,9 +79,11 @@ struct bare_channel_s {
 
 static inline bare_channel_message_t *
 bare_channel__peek_read(bare_channel_port_t *port) {
-  int read = port->cursors.read;
+  int read = atomic_load_explicit(&port->cursors.read, memory_order_relaxed);
 
-  if (read == port->cursors.write) return NULL;
+  int write = atomic_load_explicit(&port->cursors.write, memory_order_acquire);
+
+  if (read == write) return NULL;
 
   return &port->messages[read];
 }
@@ -89,16 +92,20 @@ static inline void
 bare_channel__push_read(bare_channel_port_t *port) {
   int err;
 
-  int read = port->cursors.read;
+  int read = atomic_load_explicit(&port->cursors.read, memory_order_relaxed);
 
   int next = (read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
-  port->cursors.read = next;
+  atomic_store_explicit(&port->cursors.read, next, memory_order_release);
 
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
-  if (sender->state & bare_channel_port_state_ready) {
-    uv_cond_signal(&port->conditions.drain);
+  if (atomic_load_explicit(&sender->state.ready, memory_order_acquire)) {
+    uv_mutex_lock(&sender->locks.drain);
+
+    uv_cond_signal(&sender->conditions.drain);
+
+    uv_mutex_unlock(&sender->locks.drain);
 
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
@@ -107,11 +114,13 @@ bare_channel__push_read(bare_channel_port_t *port) {
 
 static inline bare_channel_message_t *
 bare_channel__peek_write(bare_channel_port_t *port) {
-  int write = port->cursors.write;
+  int write = atomic_load_explicit(&port->cursors.write, memory_order_relaxed);
+
+  int read = atomic_load_explicit(&port->cursors.read, memory_order_acquire);
 
   int next = (write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
-  if (next == port->cursors.read) return NULL;
+  if (next == read) return NULL;
 
   return &port->messages[write];
 }
@@ -120,14 +129,18 @@ static inline void
 bare_channel__push_write(bare_channel_port_t *port) {
   int err;
 
-  int write = port->cursors.write;
+  int write = atomic_load_explicit(&port->cursors.write, memory_order_relaxed);
 
   int next = (write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
 
-  port->cursors.write = next;
+  atomic_store_explicit(&port->cursors.write, next, memory_order_release);
 
-  if (port->state & bare_channel_port_state_ready) {
+  if (atomic_load_explicit(&port->state.ready, memory_order_acquire)) {
+    uv_mutex_lock(&port->locks.flush);
+
     uv_cond_signal(&port->conditions.flush);
+
+    uv_mutex_unlock(&port->locks.flush);
 
     err = uv_async_send(&port->signals.flush);
     assert(err == 0);
@@ -152,9 +165,9 @@ static inline void
 bare_channel__end(bare_channel_port_t *port) {
   int err;
 
-  if (port->state & bare_channel_port_state_ended) return;
+  if (port->state.ended) return;
 
-  port->state |= bare_channel_port_state_ending;
+  port->state.ending = true;
 
   bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
 
@@ -162,8 +175,8 @@ bare_channel__end(bare_channel_port_t *port) {
 
   if (message == NULL) return;
 
-  port->state |= bare_channel_port_state_ended;
-  port->state &= ~bare_channel_port_state_ending;
+  port->state.ended = true;
+  port->state.ending = false;
 
   message->type = bare_channel_message_end;
 
@@ -176,29 +189,10 @@ bare_channel__on_drain(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (port->state & bare_channel_port_state_ending) bare_channel__end(port);
-  else if (port->state & bare_channel_port_state_remote_ended) bare_channel__close(port);
-  else if (port->state & bare_channel_port_state_exiting) {
-    while (true) {
-      bare_channel_message_t *message = bare_channel__peek_read(port);
-
-      if (message == NULL) break;
-
-      if (message->type == bare_channel_message_end) {
-        port->state |= bare_channel_port_state_remote_ended;
-
-        bare_channel__push_read(port);
-
-        if (port->state & bare_channel_port_state_ended) {
-          bare_channel__close(port);
-        } else {
-          bare_channel__end(port);
-        }
-      } else {
-        bare_channel__push_read(port);
-      }
-    }
-  } else {
+  if (port->state.ending) bare_channel__end(port);
+  else if (port->state.remote_ended) bare_channel__close(port);
+  else if (port->state.exiting) return;
+  else {
     js_env_t *env = port->env;
 
     js_handle_scope_t *scope;
@@ -226,8 +220,27 @@ bare_channel__on_flush(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (port->state & bare_channel_port_state_exiting) return;
-  else {
+  if (port->state.exiting) {
+    while (true) {
+      bare_channel_message_t *message = bare_channel__peek_read(port);
+
+      if (message == NULL) break;
+
+      if (message->type == bare_channel_message_end) {
+        port->state.remote_ended = true;
+
+        bare_channel__push_read(port);
+
+        if (port->state.ended) {
+          bare_channel__close(port);
+        } else {
+          bare_channel__end(port);
+        }
+      } else {
+        bare_channel__push_read(port);
+      }
+    }
+  } else {
     js_env_t *env = port->env;
 
     js_handle_scope_t *scope;
@@ -288,7 +301,11 @@ bare_channel__on_close(uv_handle_t *handle) {
   err = js_delete_reference(env, port->ctx);
   assert(err == 0);
 
-  uv_mutex_destroy(&port->lock);
+#define V(lock) \
+  uv_mutex_destroy(&port->locks.lock);
+  V(drain)
+  V(flush)
+#undef V
 
 #define V(condition) \
   uv_cond_destroy(&port->conditions.condition);
@@ -296,9 +313,7 @@ bare_channel__on_close(uv_handle_t *handle) {
   V(flush)
 #undef V
 
-  if ((port->state & bare_channel_port_state_exiting) == 0) {
-    js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
-  }
+  if (!port->state.exiting) js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
 
   err = js_close_handle_scope(env, scope);
   assert(err == 0);
@@ -311,15 +326,9 @@ static void
 bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
   bare_channel_port_t *port = data;
 
-#define V(signal) \
-  uv_ref((uv_handle_t *) &port->signals.signal);
-  V(drain)
-  V(flush)
-#undef V
+  port->state.exiting = true;
 
-  port->state |= bare_channel_port_state_exiting;
-
-  if (port->state & bare_channel_port_state_ending) return;
+  if (port->state.ending) return;
 
   bare_channel__end(port);
 }
@@ -334,16 +343,20 @@ bare_channel_init(js_env_t *env, js_callback_info_t *info) {
   err = js_create_sharedarraybuffer(env, sizeof(bare_channel_t), (void **) &channel, &handle);
   assert(err == 0);
 
-  channel->next_port = 0;
+  atomic_init(&channel->next_port, 0);
 
   for (uint8_t id = 0; id < 2; id++) {
     bare_channel_port_t *port = &channel->ports[id];
 
     port->id = id;
     port->channel = channel;
-    port->state = 0;
-    port->cursors.read = 0;
-    port->cursors.write = 0;
+
+    memset(&port->state, 0, sizeof(port->state));
+
+    atomic_init(&port->state.ready, false);
+
+    atomic_init(&port->cursors.read, 0);
+    atomic_init(&port->cursors.write, 0);
   }
 
   return handle;
@@ -365,8 +378,10 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
   assert(err == 0);
 
-  if (channel->next_port >= 2) {
-    err = js_throw_error(env, NULL, "channel already fully connected");
+  int id = atomic_fetch_add(&channel->next_port, 1);
+
+  if (id >= 2) {
+    err = js_throw_error(env, NULL, "Channel already fully connected");
     assert(err == 0);
 
     return NULL;
@@ -375,8 +390,6 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   uv_loop_t *loop;
   err = js_get_env_loop(env, &loop);
   assert(err == 0);
-
-  int id = channel->next_port++;
 
   bare_channel_port_t *port = &channel->ports[id];
 
@@ -400,8 +413,12 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   err = js_add_deferred_teardown_callback(env, bare_channel__on_teardown, (void *) port, &port->teardown);
   assert(err == 0);
 
-  err = uv_mutex_init(&port->lock);
+#define V(lock) \
+  err = uv_mutex_init(&port->locks.lock); \
   assert(err == 0);
+  V(drain)
+  V(flush)
+#undef V
 
 #define V(condition) \
   err = uv_cond_init(&port->conditions.condition); \
@@ -421,7 +438,7 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   err = uv_async_send(&port->signals.flush);
   assert(err == 0);
 
-  port->state |= bare_channel_port_state_ready;
+  atomic_store_explicit(&port->state.ready, true, memory_order_release);
 
   js_value_t *result;
   err = js_create_int32(env, id, &result);
@@ -452,13 +469,13 @@ bare_channel_port_wait_drain(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  uv_mutex_lock(&port->lock);
+  uv_mutex_lock(&port->locks.drain);
 
   while (bare_channel__peek_write(port) == NULL) {
-    uv_cond_wait(&port->conditions.drain, &port->lock);
+    uv_cond_wait(&port->conditions.drain, &port->locks.drain);
   }
 
-  uv_mutex_unlock(&port->lock);
+  uv_mutex_unlock(&port->locks.drain);
 
   return NULL;
 }
@@ -485,13 +502,13 @@ bare_channel_port_wait_flush(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  uv_mutex_lock(&port->lock);
+  uv_mutex_lock(&port->locks.flush);
 
   while (bare_channel__peek_read(port) == NULL) {
-    uv_cond_wait(&port->conditions.flush, &port->lock);
+    uv_cond_wait(&port->conditions.flush, &port->locks.flush);
   }
 
-  uv_mutex_unlock(&port->lock);
+  uv_mutex_unlock(&port->locks.flush);
 
   return NULL;
 }
@@ -525,11 +542,11 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
   if (message) {
     switch (message->type) {
     case bare_channel_message_end: {
-      port->state |= bare_channel_port_state_remote_ended;
+      port->state.remote_ended = true;
 
       bare_channel__push_read(port);
 
-      if (port->state & bare_channel_port_state_ended) {
+      if (port->state.ended) {
         bare_channel__close(port);
       } else {
         bare_channel__end(port);

@@ -4,6 +4,9 @@ const structuredClone = require('bare-structured-clone')
 const binding = require('./binding')
 const Queue = require('./lib/queue')
 
+const ENDED = 0x1
+const REMOTE_ENDED = 0x2
+
 module.exports = exports = class Channel {
   constructor(opts = {}) {
     const { handle = binding.channelInit(), interfaces = [] } = opts
@@ -26,7 +29,7 @@ class Port extends EventEmitter {
     super()
 
     this._channel = channel
-
+    this._state = 0
     this._queue = new Queue()
     this._backpressured = false
 
@@ -52,6 +55,8 @@ class Port extends EventEmitter {
 
       if (this._queue.length > 0) return this._queue.shift()
 
+      if (this._state & REMOTE_ENDED) return null
+
       this._flushing = Promise.withResolvers()
 
       await this._flushing.promise
@@ -61,6 +66,8 @@ class Port extends EventEmitter {
   readSync() {
     while (true) {
       if (this._queue.length > 0) return this._queue.shift()
+
+      if (this._state & REMOTE_ENDED) return null
 
       binding.portWaitFlush(this._channel.handle, this._id)
 
@@ -78,6 +85,8 @@ class Port extends EventEmitter {
     const data = encode(this._channel, value, opts)
 
     while (true) {
+      if (this._state & REMOTE_ENDED) return false
+
       const flushed = binding.portWrite(this._channel.handle, this._id, data)
 
       if (flushed) return true
@@ -94,6 +103,8 @@ class Port extends EventEmitter {
     const data = encode(this._channel, value, opts)
 
     while (true) {
+      if (this._state & REMOTE_ENDED) return false
+
       const flushed = binding.portWrite(this._channel.handle, this._id, data)
 
       if (flushed) return true
@@ -121,6 +132,7 @@ class Port extends EventEmitter {
 
     binding.portEnd(this._channel.handle, this._id)
 
+    this._state |= ENDED
     this._closing = Promise.withResolvers()
 
     await this._closing.promise
@@ -181,6 +193,8 @@ class Port extends EventEmitter {
   }
 
   _onend() {
+    this._state |= REMOTE_ENDED
+
     this.emit('end')
   }
 
