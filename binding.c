@@ -29,8 +29,6 @@ struct bare_channel_port_s {
 
   uint8_t id;
 
-  uv_mutex_t lock;
-
   struct {
     atomic_bool ready;
     bool ending;
@@ -45,6 +43,11 @@ struct bare_channel_port_s {
     atomic_int read;
     atomic_int write;
   } cursors;
+
+  struct {
+    uv_mutex_t drain;
+    uv_mutex_t flush;
+  } locks;
 
   struct {
     uv_cond_t drain;
@@ -98,11 +101,11 @@ bare_channel__push_read(bare_channel_port_t *port) {
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
   if (atomic_load_explicit(&sender->state.ready, memory_order_acquire)) {
-    uv_mutex_lock(&sender->lock);
+    uv_mutex_lock(&sender->locks.drain);
 
     uv_cond_signal(&sender->conditions.drain);
 
-    uv_mutex_unlock(&sender->lock);
+    uv_mutex_unlock(&sender->locks.drain);
 
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
@@ -133,11 +136,11 @@ bare_channel__push_write(bare_channel_port_t *port) {
   atomic_store_explicit(&port->cursors.write, next, memory_order_release);
 
   if (atomic_load_explicit(&port->state.ready, memory_order_acquire)) {
-    uv_mutex_lock(&port->lock);
+    uv_mutex_lock(&port->locks.flush);
 
     uv_cond_signal(&port->conditions.flush);
 
-    uv_mutex_unlock(&port->lock);
+    uv_mutex_unlock(&port->locks.flush);
 
     err = uv_async_send(&port->signals.flush);
     assert(err == 0);
@@ -298,7 +301,11 @@ bare_channel__on_close(uv_handle_t *handle) {
   err = js_delete_reference(env, port->ctx);
   assert(err == 0);
 
-  uv_mutex_destroy(&port->lock);
+#define V(lock) \
+  uv_mutex_destroy(&port->locks.lock);
+  V(drain)
+  V(flush)
+#undef V
 
 #define V(condition) \
   uv_cond_destroy(&port->conditions.condition);
@@ -406,8 +413,12 @@ bare_channel_port_init(js_env_t *env, js_callback_info_t *info) {
   err = js_add_deferred_teardown_callback(env, bare_channel__on_teardown, (void *) port, &port->teardown);
   assert(err == 0);
 
-  err = uv_mutex_init(&port->lock);
+#define V(lock) \
+  err = uv_mutex_init(&port->locks.lock); \
   assert(err == 0);
+  V(drain)
+  V(flush)
+#undef V
 
 #define V(condition) \
   err = uv_cond_init(&port->conditions.condition); \
@@ -458,13 +469,13 @@ bare_channel_port_wait_drain(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  uv_mutex_lock(&port->lock);
+  uv_mutex_lock(&port->locks.drain);
 
   while (bare_channel__peek_write(port) == NULL) {
-    uv_cond_wait(&port->conditions.drain, &port->lock);
+    uv_cond_wait(&port->conditions.drain, &port->locks.drain);
   }
 
-  uv_mutex_unlock(&port->lock);
+  uv_mutex_unlock(&port->locks.drain);
 
   return NULL;
 }
@@ -491,13 +502,13 @@ bare_channel_port_wait_flush(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  uv_mutex_lock(&port->lock);
+  uv_mutex_lock(&port->locks.flush);
 
   while (bare_channel__peek_read(port) == NULL) {
-    uv_cond_wait(&port->conditions.flush, &port->lock);
+    uv_cond_wait(&port->conditions.flush, &port->locks.flush);
   }
 
-  uv_mutex_unlock(&port->lock);
+  uv_mutex_unlock(&port->locks.flush);
 
   return NULL;
 }
