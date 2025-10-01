@@ -423,7 +423,7 @@ test('write stream', async (t) => {
         stream.write(Buffer.from(`${i}`))
       }
 
-      stream.on('close', () => port.close()).end()
+      stream.end()
     }
   )
 
