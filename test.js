@@ -339,3 +339,29 @@ test('write after remote end', async (t) => {
     thread.join()
   })
 })
+
+test('close immediately after write', async (t) => {
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      port.on('close', () => {})
+
+      if ((await port.read()) !== 'Hello') throw new Error('Failed')
+    }
+  )
+
+  const port = channel.connect()
+
+  await port.write('Hello')
+  await port.close()
+
+  thread.join()
+})

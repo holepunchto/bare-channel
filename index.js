@@ -50,11 +50,11 @@ class Port extends EventEmitter {
     while (this._flushing !== null) await this._flushing.promise
 
     while (true) {
-      if (this._state & REMOTE_ENDED) return null
-
       if (this._backpressured) this._onflush()
 
       if (this._queue.length > 0) return this._queue.shift()
+
+      if (this._state & REMOTE_ENDED) return null
 
       this._flushing = Promise.withResolvers()
 
@@ -64,9 +64,9 @@ class Port extends EventEmitter {
 
   readSync() {
     while (true) {
-      if (this._state & REMOTE_ENDED) return null
-
       if (this._queue.length > 0) return this._queue.shift()
+
+      if (this._state & REMOTE_ENDED) return null
 
       binding.portWaitFlush(this._channel.handle, this._id)
 
