@@ -35,6 +35,7 @@ class Port extends EventEmitter {
 
     this._draining = null
     this._flushing = null
+    this._ending = null
     this._closing = null
 
     this._id = binding.portInit(
@@ -130,10 +131,24 @@ class Port extends EventEmitter {
 
     if (this._closing !== null) return this._closing.promise
 
-    binding.portEnd(this._channel.handle, this._id)
-
     this._state |= ENDED
     this._closing = Promise.withResolvers()
+
+    while (true) {
+      const flushed = binding.portEnd(this._channel.handle, this._id)
+
+      if (flushed) break
+
+      this._draining = Promise.withResolvers()
+
+      await this._draining.promise
+    }
+
+    if (this._ending === null) this._ending = Promise.withResolvers()
+
+    await this._ending.promise
+
+    binding.portClose(this._channel.handle, this._id)
 
     await this._closing.promise
   }
@@ -193,17 +208,19 @@ class Port extends EventEmitter {
   }
 
   _onend() {
-    this._state |= REMOTE_ENDED
+    if (this._ending === null) this._ending = Promise.withResolvers()
 
+    this._state |= REMOTE_ENDED
+    this._ending.resolve()
+
+    this.close()
     this.emit('end')
   }
 
   _onclose() {
     if (this._closing === null) this._closing = Promise.withResolvers()
 
-    const closing = this._closing
-    this._closing = null
-    closing.resolve()
+    this._closing.resolve()
 
     this.emit('close')
   }

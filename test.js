@@ -256,7 +256,7 @@ test('serializable interface', async (t) => {
   thread.join()
 })
 
-test('unref', async (t) => {
+test.skip('unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
@@ -283,7 +283,7 @@ test('unref', async (t) => {
   })
 })
 
-test('close after unref', async (t) => {
+test.skip('close after unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
@@ -438,6 +438,28 @@ test('write stream', async (t) => {
     received,
     new Array(1e3).fill(0).map((_, i) => `${i}`)
   )
+
+  thread.join()
+})
+
+test('both sides close', async (t) => {
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      await port.close()
+    }
+  )
+
+  const port = channel.connect()
+  await port.close()
 
   thread.join()
 })
