@@ -283,7 +283,36 @@ test('unref', async (t) => {
   })
 })
 
-test('close after unref', async (t) => {
+test('close primary before unref', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      port.unref() // Let the thread exit
+    }
+  )
+
+  const port = channel.connect()
+
+  port
+    .on('close', () => {
+      t.pass('port closed')
+
+      thread.join()
+    })
+    .close()
+})
+
+test('close secondary after unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
@@ -438,6 +467,28 @@ test('write stream', async (t) => {
     received,
     new Array(1e3).fill(0).map((_, i) => `${i}`)
   )
+
+  thread.join()
+})
+
+test('both sides close', async (t) => {
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      await port.close()
+    }
+  )
+
+  const port = channel.connect()
+  await port.close()
 
   thread.join()
 })
