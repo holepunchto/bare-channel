@@ -107,8 +107,6 @@ bare_channel__push_read(bare_channel_port_t *port) {
 
     uv_mutex_unlock(&sender->locks.drain);
 
-    // printf("uv_async_send(&port->signals.flush) port=%d\n", sender->id);
-
     err = uv_async_send(&sender->signals.drain);
     assert(err == 0);
   }
@@ -144,8 +142,6 @@ bare_channel__push_write(bare_channel_port_t *port) {
 
     uv_mutex_unlock(&port->locks.flush);
 
-    // printf("uv_async_send(&port->signals.flush) port=%d\n", port->id);
-
     err = uv_async_send(&port->signals.flush);
     assert(err == 0);
   }
@@ -159,8 +155,6 @@ bare_channel__on_drain(uv_async_t *handle) {
   int err;
 
   bare_channel_port_t *port = handle->data;
-
-  // printf("bare_channel__on_drain port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
 
   if (port->state.ended) return;
 
@@ -204,8 +198,6 @@ bare_channel__on_flush(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  // printf("bare_channel__on_flush port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
-
   if (port->state.remote_ended) return;
 
   if (port->state.exiting) {
@@ -220,8 +212,6 @@ bare_channel__on_flush(uv_async_t *handle) {
         port->state.remote_ended = true;
 
         bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
-
-        // printf("uv_async_send(&port->signals.end) port=%d\n", sender->id);
 
         err = uv_async_send(&sender->signals.end);
         assert(err == 0);
@@ -259,8 +249,6 @@ bare_channel__on_end(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  // printf("bare_channel__on_end port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
-
   if (port->state.exiting) {
     if (port->state.remote_ended) bare_channel__port_close(port);
   } else {
@@ -292,8 +280,6 @@ bare_channel__on_close(uv_handle_t *handle) {
   bare_channel_port_t *port = handle->data;
 
   if (--port->state.closing != 0) return;
-
-  // printf("bare_channel__on_close port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
 
   js_deferred_teardown_t *teardown = port->teardown;
 
@@ -355,8 +341,6 @@ bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
   int err;
 
   bare_channel_port_t *port = data;
-
-  // printf("bare_channel__on_teardown port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
 
   port->state.exiting = true;
 
@@ -577,8 +561,6 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int32(env, argv[1], &id);
   assert(err == 0);
 
-  // printf("bare_channel_port_read port=%d\n", id);
-
   bare_channel_port_t *port = &channel->ports[id];
 
   bare_channel_message_t *message = bare_channel__peek_read(port);
@@ -593,8 +575,6 @@ bare_channel_port_read(js_env_t *env, js_callback_info_t *info) {
       port->state.remote_ended = true;
 
       bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
-
-      // printf("uv_async_send(&port->signals.end) port=%d\n", sender->id);
 
       err = uv_async_send(&sender->signals.end);
       assert(err == 0);
@@ -652,8 +632,6 @@ bare_channel_port_write(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int32(env, argv[1], &id);
   assert(err == 0);
 
-  // printf("bare_channel_port_write port=%d\n", id);
-
   bare_channel_port_t *receiver = &channel->ports[(id + 1) & 1];
 
   bare_channel_message_t *message = bare_channel__peek_write(receiver);
@@ -696,8 +674,6 @@ bare_channel_port_end(js_env_t *env, js_callback_info_t *info) {
   int id;
   err = js_get_value_int32(env, argv[1], &id);
   assert(err == 0);
-
-  // printf("bare_channel_port_end port=%d\n", id);
 
   bare_channel_port_t *receiver = &channel->ports[(id + 1) & 1];
 
