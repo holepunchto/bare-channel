@@ -100,16 +100,14 @@ bare_channel__push_read(bare_channel_port_t *port) {
 
   bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
 
-  if (atomic_load_explicit(&sender->state.active, memory_order_acquire)) {
-    uv_mutex_lock(&sender->locks.drain);
+  uv_mutex_lock(&sender->locks.drain);
 
-    uv_cond_signal(&sender->conditions.drain);
+  uv_cond_signal(&sender->conditions.drain);
 
-    uv_mutex_unlock(&sender->locks.drain);
+  uv_mutex_unlock(&sender->locks.drain);
 
-    err = uv_async_send(&sender->signals.drain);
-    assert(err == 0);
-  }
+  err = uv_async_send(&sender->signals.drain);
+  assert(err == 0);
 }
 
 static inline bare_channel_message_t *
