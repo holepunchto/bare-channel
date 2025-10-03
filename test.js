@@ -256,7 +256,7 @@ test('serializable interface', async (t) => {
   thread.join()
 })
 
-test.skip('unref', async (t) => {
+test('unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()
@@ -283,7 +283,36 @@ test.skip('unref', async (t) => {
   })
 })
 
-test.skip('close after unref', async (t) => {
+test('close primary before unref', async (t) => {
+  t.plan(1)
+
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const port = channel.connect()
+
+      port.unref() // Let the thread exit
+    }
+  )
+
+  const port = channel.connect()
+
+  port
+    .on('close', () => {
+      t.pass('port closed')
+
+      thread.join()
+    })
+    .close()
+})
+
+test('close secondary after unref', async (t) => {
   t.plan(1)
 
   const channel = new Channel()

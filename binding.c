@@ -33,10 +33,9 @@ struct bare_channel_port_s {
     atomic_bool active;
     bool ended;
     bool remote_ended;
+    uint8_t closing;
     bool exiting;
   } state;
-
-  uint8_t closing;
 
   bare_channel_message_t messages[BARE_CHANNEL_PORT_CAPACITY];
 
@@ -93,8 +92,6 @@ static inline void
 bare_channel__push_read(bare_channel_port_t *port) {
   int err;
 
-  // printf("bare_channel__push_read port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
-
   int read = atomic_load_explicit(&port->cursors.read, memory_order_relaxed);
 
   int next = (read + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
@@ -134,8 +131,6 @@ static inline void
 bare_channel__push_write(bare_channel_port_t *port) {
   int err;
 
-  // printf("bare_channel__push_write port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
-
   int write = atomic_load_explicit(&port->cursors.write, memory_order_relaxed);
 
   int next = (write + 1) & (BARE_CHANNEL_PORT_CAPACITY - 1);
@@ -156,8 +151,8 @@ bare_channel__push_write(bare_channel_port_t *port) {
   }
 }
 
-static void
-bare_channel__on_close(uv_handle_t *handle);
+static inline void
+bare_channel__port_close(bare_channel_port_t *port);
 
 static void
 bare_channel__on_drain(uv_async_t *handle) {
@@ -170,7 +165,17 @@ bare_channel__on_drain(uv_async_t *handle) {
   if (port->state.ended) return;
 
   if (port->state.exiting) {
-    // TODO
+    bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
+
+    bare_channel_message_t *message = bare_channel__peek_write(receiver);
+
+    if (message) {
+      message->type = bare_channel_message_end;
+
+      bare_channel__push_write(receiver);
+
+      port->state.ended = true;
+    }
   } else {
     js_env_t *env = port->env;
 
@@ -204,7 +209,28 @@ bare_channel__on_flush(uv_async_t *handle) {
   if (port->state.remote_ended) return;
 
   if (port->state.exiting) {
-    // TODO
+    while (true) {
+      bare_channel_message_t *message = bare_channel__peek_read(port);
+
+      if (message == NULL) break;
+
+      if (message->type == bare_channel_message_end) {
+        bare_channel__push_read(port);
+
+        port->state.remote_ended = true;
+
+        bare_channel_port_t *sender = &port->channel->ports[(port->id + 1) & 1];
+
+        // printf("uv_async_send(&port->signals.end) port=%d\n", sender->id);
+
+        err = uv_async_send(&sender->signals.end);
+        assert(err == 0);
+
+        if (port->state.ended) bare_channel__port_close(port);
+      } else {
+        bare_channel__push_read(port);
+      }
+    }
   } else {
     js_env_t *env = port->env;
 
@@ -236,7 +262,7 @@ bare_channel__on_end(uv_async_t *handle) {
   // printf("bare_channel__on_end port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
 
   if (port->state.exiting) {
-    // TODO
+    if (port->state.remote_ended) bare_channel__port_close(port);
   } else {
     js_env_t *env = port->env;
 
@@ -265,7 +291,7 @@ bare_channel__on_close(uv_handle_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (--port->closing != 0) return;
+  if (--port->state.closing != 0) return;
 
   // printf("bare_channel__on_close port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
 
@@ -326,13 +352,25 @@ bare_channel__on_close(uv_handle_t *handle) {
 
 static void
 bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
+  int err;
+
   bare_channel_port_t *port = data;
 
   // printf("bare_channel__on_teardown port=%d ended=%d remote_ended=%d exiting=%d\n", port->id, port->state.ended, port->state.remote_ended, port->state.exiting);
 
   port->state.exiting = true;
 
-  // TODO
+  if (port->state.closing) return;
+
+  if (!port->state.ended) {
+    err = uv_async_send(&port->signals.drain);
+    assert(err == 0);
+  }
+
+  if (!port->state.remote_ended) {
+    err = uv_async_send(&port->signals.flush);
+    assert(err == 0);
+  }
 }
 
 static js_value_t *
@@ -708,6 +746,7 @@ bare_channel_port_ref(js_env_t *env, js_callback_info_t *info) {
   uv_ref((uv_handle_t *) &port->signals.signal);
   V(drain)
   V(flush)
+  V(end)
 #undef V
 
   return NULL;
@@ -739,9 +778,22 @@ bare_channel_port_unref(js_env_t *env, js_callback_info_t *info) {
   uv_unref((uv_handle_t *) &port->signals.signal);
   V(drain)
   V(flush)
+  V(end)
 #undef V
 
   return NULL;
+}
+
+static inline void
+bare_channel__port_close(bare_channel_port_t *port) {
+  port->state.closing = 3;
+
+#define V(signal) \
+  uv_close((uv_handle_t *) &port->signals.signal, bare_channel__on_close);
+  V(drain)
+  V(flush)
+  V(end)
+#undef V
 }
 
 static js_value_t *
@@ -766,14 +818,7 @@ bare_channel_port_close(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
-  port->closing = 3;
-
-#define V(signal) \
-  uv_close((uv_handle_t *) &port->signals.signal, bare_channel__on_close);
-  V(drain)
-  V(flush)
-  V(end)
-#undef V
+  bare_channel__port_close(port);
 
   return NULL;
 }
