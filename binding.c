@@ -31,6 +31,7 @@ struct bare_channel_port_s {
 
   struct {
     atomic_bool active;
+    bool ending;
     bool ended;
     bool remote_ended;
     uint8_t closing;
@@ -154,7 +155,7 @@ bare_channel__on_drain(uv_async_t *handle) {
 
   bare_channel_port_t *port = handle->data;
 
-  if (port->state.ended) return;
+  if (port->state.ending) return;
 
   if (port->state.exiting) {
     bare_channel_port_t *receiver = &port->channel->ports[(port->id + 1) & 1];
@@ -166,7 +167,7 @@ bare_channel__on_drain(uv_async_t *handle) {
 
       bare_channel__push_write(receiver);
 
-      port->state.ended = true;
+      port->state.ending = true;
     }
   } else {
     js_env_t *env = port->env;
@@ -246,6 +247,8 @@ bare_channel__on_end(uv_async_t *handle) {
   int err;
 
   bare_channel_port_t *port = handle->data;
+
+  port->state.ended = true;
 
   if (port->state.exiting) {
     if (port->state.remote_ended) bare_channel__port_close(port);
@@ -344,7 +347,7 @@ bare_channel__on_teardown(js_deferred_teardown_t *handle, void *data) {
 
   if (port->state.closing) return;
 
-  if (!port->state.ended) {
+  if (!port->state.ending) {
     err = uv_async_send(&port->signals.drain);
     assert(err == 0);
   }
@@ -684,7 +687,7 @@ bare_channel_port_end(js_env_t *env, js_callback_info_t *info) {
 
     bare_channel_port_t *port = &channel->ports[(id + 1) & 1];
 
-    port->state.ended = true;
+    port->state.ending = true;
   }
 
   js_value_t *result;

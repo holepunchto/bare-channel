@@ -270,7 +270,7 @@ test('unref', async (t) => {
       const channel = Channel.from(handle)
       const port = channel.connect()
 
-      port.unref() // Let the thread exit
+      port.unref()
     }
   )
 
@@ -297,7 +297,7 @@ test('close primary before unref', async (t) => {
       const channel = Channel.from(handle)
       const port = channel.connect()
 
-      port.unref() // Let the thread exit
+      port.unref()
     }
   )
 
@@ -489,6 +489,54 @@ test('both sides close', async (t) => {
 
   const port = channel.connect()
   await port.close()
+
+  thread.join()
+})
+
+test('both sides unref', async (t) => {
+  const channel = new Channel()
+
+  const a = new Thread(__filename, { data: channel.handle }, async (handle) => {
+    const Channel = require('.')
+
+    const channel = Channel.from(handle)
+    const port = channel.connect()
+
+    port.unref()
+  })
+
+  const b = new Thread(__filename, { data: channel.handle }, async (handle) => {
+    const Channel = require('.')
+
+    const channel = Channel.from(handle)
+    const port = channel.connect()
+
+    await port.write('foo')
+
+    port.unref()
+  })
+
+  a.join()
+  b.join()
+})
+
+test('both sides unref in same thread', async (t) => {
+  const channel = new Channel()
+
+  const thread = new Thread(
+    __filename,
+    { data: channel.handle },
+    async (handle) => {
+      const Channel = require('.')
+
+      const channel = Channel.from(handle)
+      const a = channel.connect()
+      const b = channel.connect()
+
+      a.unref()
+      b.unref()
+    }
+  )
 
   thread.join()
 })
