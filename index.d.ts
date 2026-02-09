@@ -36,10 +36,7 @@ interface PortEvents extends EventMap {
   close: []
 }
 
-interface Port<T = unknown>
-  extends EventEmitter<PortEvents>,
-    Iterable<T>,
-    AsyncIterable<T> {
+interface Port<T = unknown> extends EventEmitter<PortEvents>, Iterable<T>, AsyncIterable<T> {
   ref(): void
   unref(): void
 
