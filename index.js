@@ -322,11 +322,7 @@ class PortDuplexStream extends Duplex {
 }
 
 function encode(channel, value, opts) {
-  const serialized = structuredClone.serializeWithTransfer(
-    value,
-    opts.transfer,
-    channel.interfaces
-  )
+  const serialized = structuredClone.serializeWithTransfer(value, opts.transfer, channel.interfaces)
 
   const state = { start: 0, end: 0, buffer: null }
 
@@ -348,8 +344,5 @@ function decode(channel, data) {
     buffer: Buffer.from(data)
   }
 
-  return structuredClone.deserializeWithTransfer(
-    structuredClone.decode(state),
-    channel.interfaces
-  )
+  return structuredClone.deserializeWithTransfer(structuredClone.decode(state), channel.interfaces)
 }
