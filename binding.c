@@ -216,9 +216,11 @@ bare_channel__on_flush(uv_async_t *handle) {
         assert(err == 0);
 
         if (port->state.ended) bare_channel__port_close(port);
-      } else {
-        bare_channel__push_read(port);
+
+        break;
       }
+
+      bare_channel__push_read(port);
     }
   } else {
     js_env_t *env = port->env;
