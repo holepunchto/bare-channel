@@ -500,9 +500,11 @@ bare_channel_port_wait_drain(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_port_t *port = &channel->ports[id];
 
+  bare_channel_port_t *receiver = &channel->ports[(id + 1) & 1];
+
   uv_mutex_lock(&port->locks.drain);
 
-  while (bare_channel__peek_write(port) == NULL) {
+  while (bare_channel__peek_write(receiver) == NULL) {
     uv_cond_wait(&port->conditions.drain, &port->locks.drain);
   }
 
