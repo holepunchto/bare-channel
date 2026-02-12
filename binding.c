@@ -685,7 +685,7 @@ bare_channel_port_end(js_env_t *env, js_callback_info_t *info) {
 
     bare_channel__push_write(receiver);
 
-    bare_channel_port_t *port = &channel->ports[(id + 1) & 1];
+    bare_channel_port_t *port = &channel->ports[id];
 
     port->state.ending = true;
   }
