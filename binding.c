@@ -763,6 +763,8 @@ bare_channel_port_unref(js_env_t *env, js_callback_info_t *info) {
 
 static inline void
 bare_channel__port_close(bare_channel_port_t *port) {
+  atomic_store_explicit(&port->state.active, false, memory_order_release);
+
   port->state.closing = 3;
 
 #define V(signal) \
