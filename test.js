@@ -1,6 +1,7 @@
 const test = require('brittle')
 const { symbols } = require('bare-structured-clone')
 const Channel = require('.')
+const BroadcastChannel = require('./lib/broadcast-channel')
 const { Thread } = Bare
 
 test('basic', async (t) => {
@@ -479,4 +480,52 @@ test('both sides unref in same thread', async (t) => {
   })
 
   thread.join()
+})
+
+test('broadcast channel', async (t) => {
+  t.plan(3)
+
+  const broadcast = new BroadcastChannel()
+
+  const thread1 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    port.write('foo')
+  })
+
+  const thread2 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    port.write('bar')
+  })
+
+  const thread3 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    port.write('baz')
+  })
+
+  const port = broadcast.connect()
+
+  setTimeout(() => {
+    t.is(port.read(), 'foo')
+    t.is(port.read(), 'bar')
+    t.is(port.read(), 'baz')
+  })
+
+  thread1.join()
+  thread2.join()
+  thread3.join()
 })
