@@ -519,11 +519,12 @@ test('broadcast channel', async (t) => {
 
   const port = broadcast.connect()
 
-  setTimeout(() => {
-    t.is(port.read(), 'foo')
-    t.is(port.read(), 'bar')
-    t.is(port.read(), 'baz')
-  })
+  const expected = ['foo', 'bar', 'baz']
+
+  while (true) {
+    t.alike(await port.read(), expected.shift())
+    if (expected.length === 0) break
+  }
 
   thread1.join()
   thread2.join()
