@@ -494,7 +494,7 @@ test('broadcast channel', async (t) => {
 
     const port = broadcast.connect()
 
-    port.write('foo')
+    await port.write('foo')
   })
 
   const thread2 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
@@ -504,7 +504,7 @@ test('broadcast channel', async (t) => {
 
     const port = broadcast.connect()
 
-    port.write('bar')
+    await port.write('bar')
   })
 
   const thread3 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
@@ -514,7 +514,7 @@ test('broadcast channel', async (t) => {
 
     const port = broadcast.connect()
 
-    port.write('baz')
+    await port.write('baz')
   })
 
   const port = broadcast.connect()
