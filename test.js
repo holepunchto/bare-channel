@@ -530,3 +530,65 @@ test('broadcast channel', async (t) => {
   thread2.join()
   thread3.join()
 })
+
+test('broadcast channel, ring rotation', async (t) => {
+  t.plan(1)
+
+  const broadcast = new BroadcastChannel()
+
+  const thread1 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    await port.write(1)
+    await port.write(2)
+    await port.read()
+    await port.write(3)
+  })
+
+  const thread2 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    await port.write(4)
+    await port.write(5)
+    await port.read()
+    await port.write(6)
+  })
+
+  const thread3 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    await port.write(7)
+    await port.write(8)
+    await port.read()
+    await port.write(9)
+  })
+
+  const port = broadcast.connect()
+
+  let count = 0
+  while (true) {
+    count++
+
+    t.comment(await port.read())
+
+    if (count === 9) break
+  }
+
+  t.pass()
+
+  thread1.join()
+  thread2.join()
+  thread3.join()
+})
