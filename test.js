@@ -526,13 +526,15 @@ test('broadcast channel', async (t) => {
     if (expected.length === 0) break
   }
 
+  await port.close()
+
   thread1.join()
   thread2.join()
   thread3.join()
 })
 
-test('broadcast channel, ring rotation', async (t) => {
-  t.plan(1)
+test('broadcast channel, buffer recycling', async (t) => {
+  t.plan(9)
 
   const broadcast = new BroadcastChannel()
 
@@ -581,12 +583,12 @@ test('broadcast channel, ring rotation', async (t) => {
   while (true) {
     count++
 
-    t.comment(await port.read())
+    t.is(await port.read(), count)
 
     if (count === 9) break
   }
 
-  t.pass()
+  await port.close()
 
   thread1.join()
   thread2.join()

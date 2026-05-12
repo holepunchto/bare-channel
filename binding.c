@@ -97,11 +97,18 @@ struct bare_channel_broadcast_message_s {
 };
 
 struct bare_channel_broadcast_port_s {
+  bare_channel_broadcast_t *channel;
+
   uint8_t id;
 
   int tail_cursor;
 
   intrusive_list_node_t node;
+
+  struct {
+    bool closing;
+    bool exiting;
+  } state;
 };
 
 struct bare_channel_broadcast_s {
@@ -863,7 +870,7 @@ bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *c
   int curr_tail = atomic_load_explicit(&channel->tail_cursor, memory_order_acquire);
 
   if (min_tail > curr_tail) {
-    for (int i = channel->tail_cursor; i <= min_tail; i++) {
+    for (int i = channel->tail_cursor; i < min_tail; i++) {
       bare_channel_broadcast_message_t *message = &channel->buffer[i & channel->buffer_mask];
 
       int sequence = atomic_load_explicit(&message->sequence, memory_order_acquire);
@@ -894,6 +901,19 @@ bare_channel_broadcast__get_port(bare_channel_broadcast_t *channel, int id) {
   }
 
   return port;
+}
+
+static void
+bare_channel_broadcast__on_close(bare_channel_broadcast_port_t *port) {
+  int err;
+
+  if (port->state.closing) return;
+
+  port->state.closing = true;
+
+  intrusive_list_remove(&port->channel->ports, &port->node);
+
+  free(port);
 }
 
 static js_value_t *
@@ -943,6 +963,8 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
 
   bare_channel_broadcast_port_t *port = malloc(sizeof(bare_channel_broadcast_port_t));
 
+  port->channel = channel;
+
   int id = atomic_fetch_add_explicit(&channel->next, 1, memory_order_acq_rel);
   port->id = id;
 
@@ -979,7 +1001,7 @@ bare_channel_port_broadcast_read(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   bare_channel_broadcast_port_t *port = bare_channel_broadcast__get_port(channel, id);
-  assert(port != NULL);
+  if (port == NULL) return NULL;
 
   int tail = port->tail_cursor;
 
@@ -1025,7 +1047,7 @@ bare_channel_port_broadcast_write(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   bare_channel_broadcast_port_t *port = bare_channel_broadcast__get_port(channel, id);
-  assert(port != NULL);
+  if (port == NULL) return NULL;
 
   int head = atomic_load_explicit(&channel->head_cursor, memory_order_acquire);
 
@@ -1059,6 +1081,34 @@ bare_channel_port_broadcast_write(js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
+bare_channel_port_broadcast_close(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 2;
+  js_value_t *argv[2];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 2);
+
+  bare_channel_broadcast_t *channel;
+  err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
+  assert(err == 0);
+
+  int id;
+  err = js_get_value_int32(env, argv[1], &id);
+  assert(err == 0);
+
+  bare_channel_broadcast_port_t *port = bare_channel_broadcast__get_port(channel, id);
+  if (port == NULL) return NULL;
+
+  bare_channel_broadcast__on_close(port);
+
+  return NULL;
+}
+
+static js_value_t *
 bare_channel_exports(js_env_t *env, js_value_t *exports) {
   int err;
 
@@ -1088,6 +1138,7 @@ bare_channel_exports(js_env_t *env, js_value_t *exports) {
   V("broadcastPortInit", bare_channel_port_broadcast_init)
   V("broadcastPortRead", bare_channel_port_broadcast_read)
   V("broadcastPortWrite", bare_channel_port_broadcast_write)
+  V("broadcastPortClose", bare_channel_port_broadcast_close)
 #undef V
 
   return exports;
