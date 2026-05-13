@@ -105,10 +105,9 @@ struct bare_channel_broadcast_port_s {
 
   intrusive_list_node_t node;
 
-  struct {
-    bool closing;
-    bool exiting;
-  } state;
+  bool closing;
+
+  js_deferred_teardown_t *teardown;
 };
 
 struct bare_channel_broadcast_s {
@@ -909,13 +908,25 @@ static void
 bare_channel_broadcast__on_close(bare_channel_broadcast_port_t *port) {
   int err;
 
-  if (port->state.closing) return;
+  port->closing = true;
 
-  port->state.closing = true;
+  js_deferred_teardown_t *teardown = port->teardown;
 
   intrusive_list_remove(&port->channel->ports, &port->node);
 
   free(port);
+
+  err = js_finish_deferred_teardown_callback(teardown);
+  assert(err == 0);
+}
+
+static void
+bare_channel_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) {
+  bare_channel_broadcast_port_t *port = data;
+
+  if (port->closing) return;
+
+  bare_channel_broadcast__on_close(port);
 }
 
 static js_value_t *
@@ -974,6 +985,11 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
   port->tail_cursor = initial_tail;
 
   intrusive_list_append(&channel->ports, &port->node);
+
+  port->closing = false;
+
+  err = js_add_deferred_teardown_callback(env, bare_channel_broadcast__on_teardown, (void *) port, &port->teardown);
+  assert(err == 0);
 
   js_value_t *result;
   err = js_create_int32(env, id, &result);
@@ -1107,9 +1123,10 @@ bare_channel_port_broadcast_close(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   bare_channel_broadcast_port_t *port = bare_channel_broadcast__get_port(channel, id);
-  if (port == NULL) return NULL;
 
-  bare_channel_broadcast__on_close(port);
+  if (port != NULL) {
+    bare_channel_broadcast__on_close(port);
+  }
 
   return NULL;
 }
