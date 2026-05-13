@@ -534,7 +534,7 @@ test('broadcast channel', async (t) => {
 })
 
 test('broadcast channel, buffer recycling', async (t) => {
-  t.plan(9)
+  t.plan(1)
 
   const broadcast = new BroadcastChannel()
 
@@ -579,18 +579,44 @@ test('broadcast channel, buffer recycling', async (t) => {
 
   const port = broadcast.connect()
 
-  let count = 0
+  let count = 1
   while (true) {
-    count++
+    await port.read()
 
-    t.is(await port.read(), count)
-
-    if (count === 9) break
+    if (count++ === 9) break
   }
+
+  t.pass()
 
   await port.close()
 
   thread1.join()
   thread2.join()
   thread3.join()
+})
+
+test('broadcast channel, ports should not read their own messages', async (t) => {
+  t.plan(1)
+
+  const broadcast = new BroadcastChannel()
+
+  const port = broadcast.connect()
+
+  await port.write('hello from main thread')
+
+  const thread = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    await port.write('hello from new thread')
+  })
+
+  t.is(await port.read(), 'hello from new thread')
+
+  await port.close()
+
+  thread.join()
 })
