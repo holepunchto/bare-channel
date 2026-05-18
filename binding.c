@@ -889,7 +889,7 @@ bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *c
   int curr_tail = atomic_load_explicit(&channel->tail_cursor, memory_order_acquire);
 
   if (min_tail > curr_tail) {
-    for (int i = channel->tail_cursor; i < min_tail; i++) {
+    for (int i = curr_tail; i < min_tail; i++) {
       bare_channel_broadcast_message_t *message = &channel->buffer[i & channel->buffer_mask];
 
       int sequence = atomic_load_explicit(&message->sequence, memory_order_acquire);
