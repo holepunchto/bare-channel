@@ -119,7 +119,11 @@ struct bare_channel_broadcast_s {
 
   intrusive_list_t ports;
 
+  uv_mutex_t lock;
+
   bare_channel_broadcast_message_t buffer[BARE_CHANNEL_BROADCAST_RING_CAPACITY];
+
+  js_deferred_teardown_t *teardown;
 };
 
 static inline bare_channel_message_t *
@@ -853,10 +857,26 @@ bare_channel_port_close(js_env_t *env, js_callback_info_t *info) {
 }
 
 static void
+bare_channel_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) {
+  int err;
+
+  bare_channel_broadcast_t *channel = data;
+
+  js_deferred_teardown_t *teardown = channel->teardown;
+
+  uv_mutex_destroy(&channel->lock);
+
+  err = js_finish_deferred_teardown_callback(teardown);
+  assert(err == 0);
+}
+
+static void
 bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *channel) {
   int err;
 
   int min_tail = INT_MAX;
+
+  uv_mutex_lock(&channel->lock);
 
   intrusive_list_for_each(next, &channel->ports) {
     bare_channel_broadcast_port_t *port = intrusive_entry(next, bare_channel_broadcast_port_t, node);
@@ -886,29 +906,35 @@ bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *c
   } else {
     atomic_store_explicit(&channel->tail_cursor, curr_tail, memory_order_release);
   }
+
+  uv_mutex_unlock(&channel->lock);
 }
 
 static void
-bare_channel_broadcast__on_close(bare_channel_broadcast_port_t *port) {
+bare_channel_port_broadcast__on_close(bare_channel_broadcast_port_t *port) {
   int err;
 
   port->closing = true;
 
   js_deferred_teardown_t *teardown = port->teardown;
 
+  uv_mutex_lock(&port->channel->lock);
+
   intrusive_list_remove(&port->channel->ports, &port->node);
+
+  uv_mutex_unlock(&port->channel->lock);
 
   err = js_finish_deferred_teardown_callback(teardown);
   assert(err == 0);
 }
 
 static void
-bare_channel_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) {
+bare_channel_port_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) {
   bare_channel_broadcast_port_t *port = data;
 
   if (port->closing) return;
 
-  bare_channel_broadcast__on_close(port);
+  bare_channel_port_broadcast__on_close(port);
 }
 
 static js_value_t *
@@ -927,6 +953,9 @@ bare_channel_broadcast_init(js_env_t *env, js_callback_info_t *info) {
 
   intrusive_list_init(&channel->ports);
 
+  err = uv_mutex_init(&channel->lock);
+  assert(err == 0);
+
   for (size_t i = 0; i < BARE_CHANNEL_BROADCAST_RING_CAPACITY; i++) {
     bare_channel_broadcast_message_t *message = &channel->buffer[i];
 
@@ -936,6 +965,9 @@ bare_channel_broadcast_init(js_env_t *env, js_callback_info_t *info) {
   }
 
   channel->buffer_mask = BARE_CHANNEL_BROADCAST_RING_CAPACITY - 1;
+
+  err = js_add_deferred_teardown_callback(env, bare_channel_broadcast__on_teardown, (void *) channel, &channel->teardown);
+  assert(err == 0);
 
   return handle;
 }
@@ -964,6 +996,8 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
 
   port->channel = channel;
 
+  uv_mutex_lock(&channel->lock);
+
   int id = atomic_fetch_add_explicit(&channel->next, 1, memory_order_acq_rel);
   port->id = id;
 
@@ -972,9 +1006,11 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
 
   intrusive_list_append(&channel->ports, &port->node);
 
+  uv_mutex_unlock(&channel->lock);
+
   port->closing = false;
 
-  err = js_add_deferred_teardown_callback(env, bare_channel_broadcast__on_teardown, (void *) port, &port->teardown);
+  err = js_add_deferred_teardown_callback(env, bare_channel_port_broadcast__on_teardown, (void *) port, &port->teardown);
   assert(err == 0);
 
   return handle;
@@ -1090,7 +1126,7 @@ bare_channel_port_broadcast_close(js_env_t *env, js_callback_info_t *info) {
   err = js_get_arraybuffer_info(env, argv[0], (void **) &port, NULL);
   assert(err == 0);
 
-  bare_channel_broadcast__on_close(port);
+  bare_channel_port_broadcast__on_close(port);
 
   return NULL;
 }
