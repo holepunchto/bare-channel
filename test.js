@@ -495,6 +495,8 @@ test('broadcast channel', async (t) => {
     const port = broadcast.connect()
 
     await port.write('foo')
+
+    await port.close()
   })
 
   const thread2 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
@@ -505,6 +507,8 @@ test('broadcast channel', async (t) => {
     const port = broadcast.connect()
 
     await port.write('bar')
+
+    await port.close()
   })
 
   const thread3 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
@@ -515,6 +519,8 @@ test('broadcast channel', async (t) => {
     const port = broadcast.connect()
 
     await port.write('baz')
+
+    await port.close()
   })
 
   const port = broadcast.connect()
@@ -549,6 +555,8 @@ test('broadcast channel, buffer recycling', async (t) => {
     await port.write(2)
     await port.read()
     await port.write(3)
+
+    await port.close()
   })
 
   const thread2 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
@@ -562,6 +570,8 @@ test('broadcast channel, buffer recycling', async (t) => {
     await port.write(5)
     await port.read()
     await port.write(6)
+
+    await port.close()
   })
 
   const thread3 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
@@ -575,6 +585,8 @@ test('broadcast channel, buffer recycling', async (t) => {
     await port.write(8)
     await port.read()
     await port.write(9)
+
+    await port.close()
   })
 
   const port = broadcast.connect()
@@ -612,6 +624,8 @@ test('broadcast channel, ports should not read their own messages', async (t) =>
     const port = broadcast.connect()
 
     await port.write('hello from new thread')
+
+    await port.close()
   })
 
   t.is(await port.read(), 'hello from new thread')

@@ -105,7 +105,21 @@ struct bare_channel_broadcast_port_s {
 
   intrusive_list_node_t node;
 
-  bool closing;
+  struct {
+    bool closing;
+    uint8_t closing_count;
+  } state;
+
+  struct {
+    uv_async_t drain;
+    uv_async_t flush;
+  } signals;
+
+  js_env_t *env;
+  js_ref_t *ctx;
+  js_ref_t *on_drain;
+  js_ref_t *on_flush;
+  js_ref_t *on_close;
 
   js_deferred_teardown_t *teardown;
 };
@@ -871,6 +885,171 @@ bare_channel_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) 
 }
 
 static void
+bare_channel_port_broadcast__on_close(uv_handle_t *handle) {
+  int err;
+
+  bare_channel_broadcast_port_t *port = handle->data;
+
+  if (--port->state.closing_count != 0) return;
+
+  js_deferred_teardown_t *teardown = port->teardown;
+
+  js_env_t *env = port->env;
+
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
+  js_value_t *ctx;
+  err = js_get_reference_value(env, port->ctx, &ctx);
+  assert(err == 0);
+
+  js_value_t *on_destroy;
+  err = js_get_reference_value(env, port->on_close, &on_destroy);
+  assert(err == 0);
+
+  err = js_delete_reference(env, port->on_drain);
+  assert(err == 0);
+
+  err = js_delete_reference(env, port->on_flush);
+  assert(err == 0);
+
+  err = js_delete_reference(env, port->on_close);
+  assert(err == 0);
+
+  err = js_delete_reference(env, port->ctx);
+  assert(err == 0);
+
+  uv_mutex_lock(&port->channel->lock);
+
+  intrusive_list_remove(&port->channel->ports, &port->node);
+
+  uv_mutex_unlock(&port->channel->lock);
+
+  js_call_function(env, ctx, on_destroy, 0, NULL, NULL);
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
+
+  err = js_finish_deferred_teardown_callback(teardown);
+  assert(err == 0);
+}
+
+static inline void
+bare_channel_port_broadcast__close(bare_channel_broadcast_port_t *port) {
+  if (port->state.closing) return;
+
+  port->state.closing = true;
+  port->state.closing_count = 2;
+
+  uv_close((uv_handle_t *) &port->signals.drain, bare_channel_port_broadcast__on_close);
+  uv_close((uv_handle_t *) &port->signals.flush, bare_channel_port_broadcast__on_close);
+}
+
+static void
+bare_channel_port_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) {
+  bare_channel_broadcast_port_t *port = data;
+
+  bare_channel_port_broadcast__close(port);
+}
+
+static void
+bare_channel_port_broadcast__on_drain(uv_async_t *handle) {
+  int err;
+
+  bare_channel_broadcast_port_t *port = handle->data;
+
+  if (port->state.closing) return;
+
+  js_env_t *env = port->env;
+
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
+  js_value_t *ctx;
+  err = js_get_reference_value(env, port->ctx, &ctx);
+  assert(err == 0);
+
+  js_value_t *on_drain;
+  err = js_get_reference_value(env, port->on_drain, &on_drain);
+  assert(err == 0);
+
+  js_call_function(env, ctx, on_drain, 0, NULL, NULL);
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
+}
+
+static void
+bare_channel_port_broadcast__on_flush(uv_async_t *handle) {
+  int err;
+
+  bare_channel_broadcast_port_t *port = handle->data;
+
+  if (port->state.closing) return;
+
+  js_env_t *env = port->env;
+
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
+  js_value_t *ctx;
+  err = js_get_reference_value(env, port->ctx, &ctx);
+  assert(err == 0);
+
+  js_value_t *on_flush;
+  err = js_get_reference_value(env, port->on_flush, &on_flush);
+  assert(err == 0);
+
+  js_call_function(env, ctx, on_flush, 0, NULL, NULL);
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
+}
+
+static void
+bare_channel_port_broadcast__on_read(bare_channel_broadcast_port_t *reader) {
+  int err;
+
+  uv_mutex_lock(&reader->channel->lock);
+
+  intrusive_list_for_each(next, &reader->channel->ports) {
+    bare_channel_broadcast_port_t *port = intrusive_entry(next, bare_channel_broadcast_port_t, node);
+
+    if (port->state.closing || port->id == reader->id) {
+      continue;
+    }
+
+    err = uv_async_send(&port->signals.drain);
+    assert(err == 0);
+  }
+
+  uv_mutex_unlock(&reader->channel->lock);
+}
+
+static void
+bare_channel_port_broadcast__on_write(bare_channel_broadcast_port_t *writer) {
+  int err;
+
+  uv_mutex_lock(&writer->channel->lock);
+
+  intrusive_list_for_each(next, &writer->channel->ports) {
+    bare_channel_broadcast_port_t *port = intrusive_entry(next, bare_channel_broadcast_port_t, node);
+
+    if (port->state.closing || port->id == writer->id) {
+      continue;
+    }
+
+    err = uv_async_send(&port->signals.flush);
+    assert(err == 0);
+  }
+
+  uv_mutex_unlock(&writer->channel->lock);
+}
+
+static bool
 bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *channel) {
   int err;
 
@@ -885,6 +1064,8 @@ bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *c
       min_tail = port->tail_cursor;
     }
   }
+
+  uv_mutex_unlock(&channel->lock);
 
   int curr_tail = atomic_load_explicit(&channel->tail_cursor, memory_order_acquire);
 
@@ -907,34 +1088,7 @@ bare_channel_broadcast__recycle_queue(js_env_t *env, bare_channel_broadcast_t *c
     atomic_store_explicit(&channel->tail_cursor, curr_tail, memory_order_release);
   }
 
-  uv_mutex_unlock(&channel->lock);
-}
-
-static void
-bare_channel_port_broadcast__on_close(bare_channel_broadcast_port_t *port) {
-  int err;
-
-  port->closing = true;
-
-  js_deferred_teardown_t *teardown = port->teardown;
-
-  uv_mutex_lock(&port->channel->lock);
-
-  intrusive_list_remove(&port->channel->ports, &port->node);
-
-  uv_mutex_unlock(&port->channel->lock);
-
-  err = js_finish_deferred_teardown_callback(teardown);
-  assert(err == 0);
-}
-
-static void
-bare_channel_port_broadcast__on_teardown(js_deferred_teardown_t *handle, void *data) {
-  bare_channel_broadcast_port_t *port = data;
-
-  if (port->closing) return;
-
-  bare_channel_port_broadcast__on_close(port);
+  return min_tail > curr_tail;
 }
 
 static js_value_t *
@@ -976,13 +1130,13 @@ static js_value_t *
 bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 1;
-  js_value_t *argv[1];
+  size_t argc = 5;
+  js_value_t *argv[5];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 1);
+  assert(argc == 5);
 
   bare_channel_broadcast_t *channel;
   err = js_get_sharedarraybuffer_info(env, argv[0], (void **) &channel, NULL);
@@ -994,7 +1148,25 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
   err = js_create_arraybuffer(env, sizeof(bare_channel_broadcast_port_t), (void **) &port, &handle);
   assert(err == 0);
 
+  uv_loop_t *loop;
+  err = js_get_env_loop(env, &loop);
+  assert(err == 0);
+
   port->channel = channel;
+
+  port->env = env;
+
+  err = js_create_reference(env, argv[1], 1, &port->ctx);
+  assert(err == 0);
+
+  err = js_create_reference(env, argv[2], 1, &port->on_drain);
+  assert(err == 0);
+
+  err = js_create_reference(env, argv[3], 1, &port->on_flush);
+  assert(err == 0);
+
+  err = js_create_reference(env, argv[4], 1, &port->on_close);
+  assert(err == 0);
 
   uv_mutex_lock(&channel->lock);
 
@@ -1008,12 +1180,61 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
 
   uv_mutex_unlock(&channel->lock);
 
-  port->closing = false;
+  port->state.closing = false;
+  port->state.closing_count = 0;
 
   err = js_add_deferred_teardown_callback(env, bare_channel_port_broadcast__on_teardown, (void *) port, &port->teardown);
   assert(err == 0);
 
+#define V(signal) \
+  err = uv_async_init(loop, &port->signals.signal, bare_channel_port_broadcast__on_##signal); \
+  assert(err == 0); \
+  port->signals.signal.data = (void *) port;
+  V(drain)
+  V(flush)
+#undef V
+
+  err = uv_async_send(&port->signals.flush);
+  assert(err == 0);
+
   return handle;
+}
+
+static js_value_t *
+bare_channel_port_broadcast__read(js_env_t *env, bare_channel_broadcast_port_t *port) {
+  int err;
+
+  bare_channel_broadcast_t *channel = port->channel;
+
+  int tail = port->tail_cursor;
+
+  bare_channel_broadcast_message_t *message = &channel->buffer[tail & channel->buffer_mask];
+
+  int sequence = atomic_load_explicit(&message->sequence, memory_order_relaxed);
+
+  int dif = sequence - (tail + 1);
+
+  if (dif == 0 && message->writer_id == port->id) {
+    port->tail_cursor++;
+
+    return bare_channel_port_broadcast__read(env, port);
+  }
+
+  js_value_t *result;
+
+  if (dif == 0) {
+    port->tail_cursor++;
+
+    err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
+    assert(err == 0);
+
+    bare_channel_port_broadcast__on_read(port);
+  } else {
+    err = js_get_null(env, &result);
+    assert(err == 0);
+  }
+
+  return result;
 }
 
 static js_value_t *
@@ -1032,31 +1253,42 @@ bare_channel_port_broadcast_read(js_env_t *env, js_callback_info_t *info) {
   err = js_get_arraybuffer_info(env, argv[0], (void **) &port, NULL);
   assert(err == 0);
 
+  return bare_channel_port_broadcast__read(env, port);
+}
+
+static int
+bare_channel_port_broadcast__write(js_env_t *env, bare_channel_broadcast_port_t *port, js_value_t *payload) {
+  int err;
+
   bare_channel_broadcast_t *channel = port->channel;
 
-  int tail = port->tail_cursor;
+  int head = atomic_load_explicit(&channel->head_cursor, memory_order_acquire);
 
-  bare_channel_broadcast_message_t *message = &channel->buffer[tail & channel->buffer_mask];
+  bare_channel_broadcast_message_t *message = &channel->buffer[head & channel->buffer_mask];
 
-  int sequence = atomic_load_explicit(&message->sequence, memory_order_relaxed);
+  int sequence = atomic_load_explicit(&message->sequence, memory_order_acquire);
 
-  int dif = sequence - (tail + 1);
+  int dif = sequence - head;
 
   if (dif == 0) {
-    port->tail_cursor++;
-  }
-
-  js_value_t *result;
-
-  if (dif == 0 && message->writer_id != port->id) {
-    err = js_create_arraybuffer_with_backing_store(env, message->backing_store, NULL, NULL, &result);
+    err = js_get_arraybuffer_backing_store(env, payload, &message->backing_store);
     assert(err == 0);
+
+    err = js_detach_arraybuffer(env, payload);
+    assert(err == 0);
+
+    message->writer_id = port->id;
+
+    atomic_store_explicit(&channel->head_cursor, head + 1, memory_order_release);
+    atomic_store_explicit(&message->sequence, sequence + 1, memory_order_release);
+
+    bare_channel_port_broadcast__on_write(port);
   } else {
-    err = js_get_null(env, &result);
-    assert(err == 0);
+    atomic_store_explicit(&channel->head_cursor, head, memory_order_release);
+    atomic_store_explicit(&message->sequence, sequence, memory_order_release);
   }
 
-  return result;
+  return dif;
 }
 
 static js_value_t *
@@ -1075,32 +1307,12 @@ bare_channel_port_broadcast_write(js_env_t *env, js_callback_info_t *info) {
   err = js_get_arraybuffer_info(env, argv[0], (void **) &port, NULL);
   assert(err == 0);
 
-  bare_channel_broadcast_t *channel = port->channel;
+  int dif = bare_channel_port_broadcast__write(env, port, argv[1]);
 
-  int head = atomic_load_explicit(&channel->head_cursor, memory_order_acquire);
-
-  bare_channel_broadcast_message_t *message = &channel->buffer[head & channel->buffer_mask];
-
-  int sequence = atomic_load_explicit(&message->sequence, memory_order_acquire);
-
-  int dif = sequence - head;
-
-  if (dif == 0) {
-    err = js_get_arraybuffer_backing_store(env, argv[1], &message->backing_store);
-    assert(err == 0);
-
-    err = js_detach_arraybuffer(env, argv[1]);
-    assert(err == 0);
-
-    message->writer_id = port->id;
-
-    atomic_store_explicit(&channel->head_cursor, head + 1, memory_order_release);
-    atomic_store_explicit(&message->sequence, sequence + 1, memory_order_release);
-  } else {
-    atomic_store_explicit(&channel->head_cursor, head, memory_order_release);
-    atomic_store_explicit(&message->sequence, sequence, memory_order_release);
-
-    if (dif < 0) bare_channel_broadcast__recycle_queue(env, channel);
+  if (dif < 0) {
+    if (bare_channel_broadcast__recycle_queue(env, port->channel)) {
+      dif = bare_channel_port_broadcast__write(env, port, argv[1]);
+    }
   }
 
   js_value_t *result;
@@ -1126,7 +1338,7 @@ bare_channel_port_broadcast_close(js_env_t *env, js_callback_info_t *info) {
   err = js_get_arraybuffer_info(env, argv[0], (void **) &port, NULL);
   assert(err == 0);
 
-  bare_channel_port_broadcast__on_close(port);
+  bare_channel_port_broadcast__close(port);
 
   return NULL;
 }
