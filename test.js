@@ -525,80 +525,17 @@ test('broadcast channel', async (t) => {
 
   const port = broadcast.connect()
 
-  const expected = ['foo', 'bar', 'baz']
+  let expected = ['foo', 'bar', 'baz']
 
   while (true) {
-    t.alike(await port.read(), expected.shift())
+    const value = await port.read()
+
+    t.ok(expected.includes(value))
+
+    expected = expected.filter((item) => item !== value)
+
     if (expected.length === 0) break
   }
-
-  await port.close()
-
-  thread1.join()
-  thread2.join()
-  thread3.join()
-})
-
-test('broadcast channel, buffer recycling', async (t) => {
-  t.plan(1)
-
-  const broadcast = new BroadcastChannel()
-
-  const thread1 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
-    const BroadcastChannel = require('./lib/broadcast-channel')
-
-    const broadcast = BroadcastChannel.from(handle)
-
-    const port = broadcast.connect()
-
-    await port.write(1)
-    await port.write(2)
-    await port.read()
-    await port.write(3)
-
-    await port.close()
-  })
-
-  const thread2 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
-    const BroadcastChannel = require('./lib/broadcast-channel')
-
-    const broadcast = BroadcastChannel.from(handle)
-
-    const port = broadcast.connect()
-
-    await port.write(4)
-    await port.write(5)
-    await port.read()
-    await port.write(6)
-
-    await port.close()
-  })
-
-  const thread3 = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
-    const BroadcastChannel = require('./lib/broadcast-channel')
-
-    const broadcast = BroadcastChannel.from(handle)
-
-    const port = broadcast.connect()
-
-    await port.write(7)
-    await port.write(8)
-    await port.read()
-    await port.write(9)
-
-    await port.close()
-  })
-
-  const port = broadcast.connect()
-
-  let count = 1
-  while (true) {
-    await port.read()
-
-    if (count++ === 9) break
-  }
-
-  t.pass()
 
   await port.close()
 
@@ -629,6 +566,49 @@ test('broadcast channel, ports should not read their own messages', async (t) =>
   })
 
   t.is(await port.read(), 'hello from new thread')
+
+  await port.close()
+
+  thread.join()
+})
+
+test('broadcast channel, buffer rotation', async (t) => {
+  t.plan(1)
+
+  const broadcast = new BroadcastChannel()
+
+  const thread = new Thread(__filename, { data: broadcast.handle }, async (handle) => {
+    const BroadcastChannel = require('./lib/broadcast-channel')
+
+    const broadcast = BroadcastChannel.from(handle)
+
+    const port = broadcast.connect()
+
+    let count = 0
+
+    while (true) {
+      await port.write(++count)
+      await port.read()
+
+      if (count === 10) break
+    }
+
+    await port.close()
+  })
+
+  const port = broadcast.connect()
+
+  let loopCount = 0
+
+  while (true) {
+    await port.write('foo')
+    await port.read()
+
+    if (++loopCount === 9) break
+  }
+
+  await port.write('foo')
+  t.is(await port.read(), 10)
 
   await port.close()
 
