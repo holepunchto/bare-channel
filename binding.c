@@ -900,6 +900,7 @@ static inline void
 bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t *channel) {
   int err;
 
+  // Calculate the smallest tail from all active ports
   int min_port_tail = INT_MAX;
 
   uv_mutex_lock(&channel->lock);
@@ -916,6 +917,7 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
     }
   }
 
+  // Handle the 'no active ports' edge-case
   if (min_port_tail == INT_MAX) {
     uv_mutex_unlock(&channel->lock);
 
@@ -924,6 +926,8 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
 
   int channel_tail = atomic_load_explicit(&channel->tail_cursor, memory_order_acquire);
 
+  // No slots to release
+  // "min_port_tail < channel_tail" should be an impossible case
   if (min_port_tail == channel_tail) {
     uv_mutex_unlock(&channel->lock);
 
@@ -932,6 +936,7 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
     return;
   }
 
+  // Release slots read by all active ports
   for (int i = channel_tail; i < min_port_tail; i++) {
     bare_channel_broadcast_message_t *message = &channel->buffer[i & channel->buffer_mask];
 
@@ -947,6 +952,7 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
 
   atomic_store_explicit(&channel->tail_cursor, min_port_tail, memory_order_release);
 
+  // Notify ports that may have pending writes
   intrusive_list_for_each(next, &channel->ports) {
     bare_channel_broadcast_port_t *port = intrusive_entry(next, bare_channel_broadcast_port_t, node);
 
@@ -1173,7 +1179,9 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
   port->tail_cursor = initial_tail;
 
   uv_mutex_lock(&channel->lock);
+
   intrusive_list_append(&channel->ports, &port->node);
+
   uv_mutex_unlock(&channel->lock);
 
   port->state.closing = false;
