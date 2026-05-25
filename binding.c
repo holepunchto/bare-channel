@@ -101,7 +101,7 @@ struct bare_channel_broadcast_port_s {
 
   uint8_t id;
 
-  int tail_cursor;
+  atomic_int tail_cursor;
 
   intrusive_list_node_t node;
 
@@ -875,7 +875,7 @@ static inline bare_channel_broadcast_message_t *
 bare_channel_port_broadcast__peek_read(bare_channel_broadcast_port_t *port) {
   bare_channel_broadcast_t *channel = port->channel;
 
-  int tail = port->tail_cursor;
+  int tail = atomic_load_explicit(&port->tail_cursor, memory_order_acquire);
 
   bare_channel_broadcast_message_t *message = &channel->buffer[tail & channel->buffer_mask];
 
@@ -884,10 +884,12 @@ bare_channel_port_broadcast__peek_read(bare_channel_broadcast_port_t *port) {
   int dif = sequence - (tail + 1);
 
   if (dif != 0) {
+    atomic_store_explicit(&port->tail_cursor, tail, memory_order_release);
+
     return NULL;
   }
 
-  port->tail_cursor++;
+  atomic_store_explicit(&port->tail_cursor, tail + 1, memory_order_release);
 
   if (message->writer_id == port->id) {
     return bare_channel_port_broadcast__peek_read(port);
@@ -911,9 +913,8 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
     bool closing = atomic_load_explicit(&port->state.closing, memory_order_relaxed);
     if (closing) continue;
 
-    if (port->tail_cursor < min_port_tail) {
-      min_port_tail = port->tail_cursor;
-    }
+    int port_tail = atomic_load_explicit(&port->tail_cursor, memory_order_relaxed);
+    if (port_tail < min_port_tail) min_port_tail = port_tail;
   }
 
   // Handle the 'no active ports' edge-case
@@ -1175,7 +1176,7 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
   port->id = id;
 
   int initial_tail = atomic_load_explicit(&channel->tail_cursor, memory_order_relaxed);
-  port->tail_cursor = initial_tail;
+  atomic_init(&port->tail_cursor, initial_tail);
 
   uv_mutex_lock(&channel->lock);
 
