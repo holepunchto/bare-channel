@@ -106,7 +106,7 @@ struct bare_channel_broadcast_port_s {
   intrusive_list_node_t node;
 
   struct {
-    bool closing;
+    atomic_bool closing;
     uint8_t closing_count;
   } state;
 
@@ -908,9 +908,8 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
   intrusive_list_for_each(next, &channel->ports) {
     bare_channel_broadcast_port_t *port = intrusive_entry(next, bare_channel_broadcast_port_t, node);
 
-    if (port->state.closing) {
-      continue;
-    }
+    bool closing = atomic_load_explicit(&port->state.closing, memory_order_relaxed);
+    if (closing) continue;
 
     if (port->tail_cursor < min_port_tail) {
       min_port_tail = port->tail_cursor;
@@ -1184,7 +1183,7 @@ bare_channel_port_broadcast_init(js_env_t *env, js_callback_info_t *info) {
 
   uv_mutex_unlock(&channel->lock);
 
-  port->state.closing = false;
+  atomic_init(&port->state.closing, false);
   port->state.closing_count = 0;
 
   port->env = env;
@@ -1303,9 +1302,12 @@ bare_channel_port_broadcast_write(js_env_t *env, js_callback_info_t *info) {
 
 static inline void
 bare_channel_port_broadcast__close(bare_channel_broadcast_port_t *port) {
-  if (port->state.closing) return;
+  if (atomic_load_explicit(&port->state.closing, memory_order_relaxed)) {
+    return;
+  }
 
-  port->state.closing = true;
+  atomic_store_explicit(&port->state.closing, true, memory_order_seq_cst);
+
   port->state.closing_count = 2;
 
   bare_channel_port_broadcast__after_read(port->env, port->channel);
