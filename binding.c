@@ -92,7 +92,7 @@ struct bare_channel_broadcast_message_s {
   int writer_id;
 
   union {
-    js_arraybuffer_backing_store_t *backing_store;
+    js_value_t *sharedarraybuffer;
   };
 };
 
@@ -944,8 +944,8 @@ bare_channel_port_broadcast__after_read(js_env_t *env, bare_channel_broadcast_t 
 
     message->writer_id = -1;
 
-    err = js_release_arraybuffer_backing_store(env, message->backing_store);
-    assert(err == 0);
+    // err = js_release_arraybuffer_backing_store(env, message->backing_store);
+    // assert(err == 0);
 
     atomic_store_explicit(&message->sequence, sequence + channel->buffer_mask, memory_order_release);
   }
@@ -1238,8 +1238,7 @@ bare_channel_port_broadcast_read(js_env_t *env, js_callback_info_t *info) {
   js_value_t *result;
 
   if (message) {
-    js_value_t *sharedarraybuffer;
-    err = js_create_sharedarraybuffer_with_backing_store(env, message->backing_store, (void **) &result, NULL, &sharedarraybuffer);
+    err = js_get_sharedarraybuffer_info(env, message->sharedarraybuffer, (void **) &result, NULL);
     assert(err == 0);
 
     bare_channel_port_broadcast__after_read(env, channel);
@@ -1280,11 +1279,7 @@ bare_channel_port_broadcast_write(js_env_t *env, js_callback_info_t *info) {
   if (dif == 0) {
     message->writer_id = port->id;
 
-    js_value_t *sharedarraybuffer;
-    err = js_create_sharedarraybuffer(env, sizeof(js_value_t *), (void **) &argv[1], &sharedarraybuffer);
-    assert(err == 0);
-
-    err = js_get_sharedarraybuffer_backing_store(env, sharedarraybuffer, &message->backing_store);
+    err = js_create_sharedarraybuffer(env, sizeof(js_value_t *), (void **) &argv[1], &message->sharedarraybuffer);
     assert(err == 0);
 
     atomic_store_explicit(&channel->head_cursor, head + 1, memory_order_release);

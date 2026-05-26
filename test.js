@@ -482,7 +482,7 @@ test('both sides unref in same thread', async (t) => {
   thread.join()
 })
 
-test('broadcast channel', async (t) => {
+test.solo('broadcast channel', async (t) => {
   t.plan(3)
 
   const broadcast = new BroadcastChannel()
