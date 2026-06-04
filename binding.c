@@ -220,6 +220,9 @@ bare_channel__on_flush(uv_async_t *handle) {
         break;
       }
 
+      err = js_release_arraybuffer_backing_store(port->env, message->backing_store);
+      assert(err == 0);
+
       bare_channel__push_read(port);
     }
   } else {
