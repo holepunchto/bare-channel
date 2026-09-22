@@ -1,22 +1,15 @@
 const test = require('brittle')
+const Thread = require('bare-thread')
 const { symbols } = require('bare-structured-clone')
 const Channel = require('.')
-const { Thread } = Bare
 
 test('basic', async (t) => {
   t.plan(2)
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    for await (const data of port) {
-      await port.write(data)
-    }
+  const thread = new Thread(require.resolve('./test/fixtures/echo'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -41,15 +34,8 @@ test('read async', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    for await (const data of port) {
-      await port.write(data)
-    }
+  const thread = new Thread(require.resolve('./test/fixtures/echo'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -74,15 +60,8 @@ test('read blocking', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    for await (const data of port) {
-      await port.write(data)
-    }
+  const thread = new Thread(require.resolve('./test/fixtures/echo'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -107,15 +86,8 @@ test('write blocking', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    for await (const data of port) {
-      await port.write(data)
-    }
+  const thread = new Thread(require.resolve('./test/fixtures/echo'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -140,15 +112,8 @@ test('big echo', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    for await (const data of port) {
-      await port.write(data)
-    }
+  const thread = new Thread(require.resolve('./test/fixtures/echo'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -195,28 +160,8 @@ test('serializable interface', async (t) => {
 
   const channel = new Channel({ interfaces: [Foo] })
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-    const { symbols } = require('bare-structured-clone')
-
-    class Foo {
-      constructor(foo) {
-        this.foo = foo
-      }
-
-      [symbols.serialize]() {
-        return this.foo
-      }
-
-      static [symbols.deserialize](serialized) {
-        return new Foo(serialized)
-      }
-    }
-
-    const channel = Channel.from(handle, { interfaces: [Foo] })
-    const port = channel.connect()
-
-    await port.write(await port.read())
+  const thread = new Thread(require.resolve('./test/fixtures/serializable-interface'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -237,13 +182,8 @@ test('unref', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    port.unref()
+  const thread = new Thread(require.resolve('./test/fixtures/unref'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -260,13 +200,8 @@ test('close primary before unref', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    port.unref()
+  const thread = new Thread(require.resolve('./test/fixtures/unref'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -285,14 +220,8 @@ test('close secondary after unref', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    port.unref()
-    port.close()
+  const thread = new Thread(require.resolve('./test/fixtures/unref-close'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -309,13 +238,8 @@ test('write after remote end', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    port.close()
+  const thread = new Thread(require.resolve('./test/fixtures/close'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -332,15 +256,8 @@ test('write after remote end', async (t) => {
 test('close immediately after write', async (t) => {
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    port.on('close', () => {})
-
-    if ((await port.read()) !== 'Hello') throw new Error('Failed')
+  const thread = new Thread(require.resolve('./test/fixtures/expect-hello'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -356,17 +273,8 @@ test('read stream', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    for (let i = 0; i < 1e3; i++) {
-      await port.write(i)
-    }
-
-    await port.close()
+  const thread = new Thread(require.resolve('./test/fixtures/write-many'), {
+    data: { handle: channel.handle, count: 1e3 }
   })
 
   const port = channel.connect()
@@ -390,18 +298,8 @@ test('write stream', async (t) => {
 
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-    const stream = port.createWriteStream()
-
-    for (let i = 0; i < 1e3; i++) {
-      stream.write(Buffer.from(`${i}`))
-    }
-
-    stream.end()
+  const thread = new Thread(require.resolve('./test/fixtures/write-stream'), {
+    data: { handle: channel.handle, count: 1e3 }
   })
 
   const port = channel.connect()
@@ -422,13 +320,8 @@ test('write stream', async (t) => {
 test('both sides close', async (t) => {
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    await port.close()
+  const thread = new Thread(require.resolve('./test/fixtures/close'), {
+    data: channel.handle
   })
 
   const port = channel.connect()
@@ -440,24 +333,12 @@ test('both sides close', async (t) => {
 test('both sides unref', async (t) => {
   const channel = new Channel()
 
-  const a = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    port.unref()
+  const a = new Thread(require.resolve('./test/fixtures/unref'), {
+    data: channel.handle
   })
 
-  const b = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const port = channel.connect()
-
-    await port.write('foo')
-
-    port.unref()
+  const b = new Thread(require.resolve('./test/fixtures/unref-write'), {
+    data: channel.handle
   })
 
   a.join()
@@ -467,15 +348,8 @@ test('both sides unref', async (t) => {
 test('both sides unref in same thread', async (t) => {
   const channel = new Channel()
 
-  const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-    const Channel = require('.')
-
-    const channel = Channel.from(handle)
-    const a = channel.connect()
-    const b = channel.connect()
-
-    a.unref()
-    b.unref()
+  const thread = new Thread(require.resolve('./test/fixtures/unref-both'), {
+    data: channel.handle
   })
 
   thread.join()
