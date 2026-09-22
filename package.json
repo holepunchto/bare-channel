@@ -39,6 +39,7 @@
     "bare-structured-clone": "^2.0.0"
   },
   "devDependencies": {
+    "bare-thread": "^1.2.6",
     "brittle": "^3.1.1",
     "cmake-bare": "^1.1.7",
     "lunte": "^1.8.0",

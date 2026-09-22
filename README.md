@@ -10,20 +10,11 @@ npm i bare-channel
 
 ```js
 const Channel = require('bare-channel')
-const { Thread } = Bare
+const Thread = require('bare-thread')
 
 const channel = new Channel()
 
-const thread = new Thread(__filename, { data: channel.handle }, async (handle) => {
-  const Channel = require('bare-channel')
-
-  const channel = Channel.from(handle)
-  const port = channel.connect()
-
-  for await (const data of port) {
-    await port.write(data)
-  }
-})
+const thread = new Thread(require.resolve('./echo'), { data: channel.handle })
 
 const port = channel.connect()
 
@@ -34,6 +25,23 @@ console.log(await port.read())
 await port.close()
 
 thread.join()
+```
+
+`echo.js`
+
+```js
+const Channel = require('bare-channel')
+
+main()
+
+async function main() {
+  const channel = Channel.from(Bare.Thread.self.data)
+  const port = channel.connect()
+
+  for await (const data of port) {
+    await port.write(data)
+  }
+}
 ```
 
 ## API
@@ -57,7 +65,7 @@ options = {
 
 #### `channel.handle`
 
-The underlying `SharedArrayBuffer` for the channel. Pass this across thread boundaries (e.g. via `Bare.Thread`'s `data` option) and reconstruct the channel on the other side with `Channel.from(handle)`.
+The underlying `SharedArrayBuffer` for the channel. Pass this across thread boundaries (e.g. via a thread's `data` option) and reconstruct the channel on the other side with `Channel.from(handle)`.
 
 #### `channel.interfaces`
 
